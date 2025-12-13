@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCode Wrapper Log Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-semibold text-gray-100 mb-2">OpenCode Wrapper Log Viewer</h1>
+            <p class="text-gray-400">Monitor API requests and responses in real-time</p>
+        </header>
+
+        <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+            <div class="p-4 border-b border-gray-700">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-lg font-medium text-gray-100">Recent Logs</h2>
+                    <div class="flex space-x-2">
+                        <button class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded-md transition-colors">
+                            Filter
+                        </button>
+                        <button class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded-md transition-colors">
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 max-h-96 overflow-y-auto">
+                <pre class="text-sm text-gray-300 font-mono leading-relaxed" id="logContainer">
+1|opencode-ai-free  | 📤 Sending to Zen: {
+1|opencode-ai-free  |   body: '{\n' +
+1|opencode-ai-free  |     '  "model": "grok-code",\n' +
+1|opencode-ai-free  |     '  "messages": [\n' +
+1|opencode-ai-free  |     '    {\n' +
+1|opencode-ai-free  |     '      "role": "system",\n' +
+1|opencode-ai-free  |     `      "content": "You are conducting deep research on: \\"indian sites\\"\\nCurrent date and time: Thursday, November 20, 2025 at 03:45:16 PM\\n\\nCurrent progress: 1/5 thoughts completed\\nSources found: 0\\nWeb search: ENABLED\\n\\nThought history:\\n\\n\\nInstructions for this research step:\\n1. Analyze what information is still needed\\n2. Plan the next research action (search, read_url, analyze, extract_links)\\n3. Be specific about what you're looking for - focus on practical, beginner-friendly content (tutorials, guides, documentation) rather than academic papers or research articles\\n\\nAvailable actions:\\n- \\"search\\": Search the web for specific terms (provide concise, direct search queries like \\"Next.js documentation\\" not long sentences)\\n- \\"read_url\\": Read content from a specific URL (provide clean URLs without extra text)\\n- \\"analyze\\": Analyze existing information\\n- \\"extract_links\\": Extract links from recently read content\\n\\nFor search queries: Keep them short and direct (2-5 words maximum). Focus on practical content. Examples: \\"Next.js tutorial\\", \\"React beginner guide\\", \\"Python basics course\\", \\"JavaScript docs\\"\\n\\nIMPORTANT: Avoid academic/research content. Prioritize tutorials, guides, documentation, and practical examples over research papers, academic journals, or scholarly articles. If web search fails (times out, network errors, etc.), immediately switch to search_local to search through the user's personal resources.\\n\\nReturn JSON:\\n{\\n  \\"thought\\": \\"Your current analysis and plan\\",\\n  \\"action\\": \\"search|read_url|analyze|extract_links\\",\\n  \\"actionDetails\\": \\"CONCISE details - for search: 2-5 word practical query, for read_url: clean URL only\\",\\n  \\"nextThoughtNeeded\\": true/false,\\n  \\"totalThoughts\\": estimated_total,\\n  \\"finalAnswer\\": \\"ONLY if confident (80%+), provide final answer\\",\\n  \\"confidence\\": 0-100\\n}"\n` +
+1|opencode-ai-free  |     '    },\n' +
+1|opencode-ai-free  |     '    {\n' +
+1|opencode-ai-free  |     '      "role": "user",\n' +
+1|opencode-ai-free  |     '      "content": "Execute thought step 1 for: indian sites"\n' +
+1|opencode-ai-free  |     '    }\n' +
+1|opencode-ai-free  |     '  ],\n' +
+1|opencode-ai-free  |     '  "stream": false\n' +
+1|opencode-ai-free  |     '}'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | 📥 Zen response status: 200 OK
+1|opencode-ai-free  | 📥 Zen response headers: {
+1|opencode-ai-free  |   'cf-placement': 'local-EWR',
+1|opencode-ai-free  |   'cf-ray': '9a172f6a6b1843e0-EWR',
+1|opencode-ai-free  |   'cf-placement': 'local-EWR',
+1|opencode-ai-free  |   'cf-ray': '9a172f6a6b1843e0-EWR',
+1|opencode-ai-free  |   connection: 'keep-alive',
+1|opencode-ai-free  |   'content-encoding': 'br',
+1|opencode-ai-free  |   'content-type': 'application/json',
+1|opencode-ai-free  |   date: 'Thu, 20 Nov 2025 10:15:28 GMT',
+1|opencode-ai-free  |   server: 'cloudflare',
+1|opencode-ai-free  |   'transfer-encoding': 'chunked',
+1|opencode-ai-free  |   vary: 'accept-encoding'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | Body used before read: false
+1|opencode-ai-free  | Body used after text: false
+1|opencode-ai-free  | 📥 Zen response text: {"id":"2fdb9d25-7d70-83ad-fae5-442b9d6ba6ab","object":"chat.completion","created":1763633717,"model":"grok-code","choices":[{"index":0,"message":{"role":"assistant","content":"{\n  \"thought\": \"The topic 'indian sites' is ambiguous and could refer to historical, archaeological, or tourist sites in India. No prior information available. I need to search for practical guides or tutorials on Indian sites to clarify and gather beginner-friendly content.\",\n  \"action\": \"search\",\n  \"actionDetails\": \"indian sites guide\",\n  \"nextThoughtNeeded\": true,\n  \"totalThoughts\": 5,\n  \"finalAnswer\": \"\",\n  \"confidence\": 10\n}","refusal":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":610,"completion_tokens":100,"total_tokens":1380,"prompt_tokens_details":{"text_tokens":610,"audio_tokens":0,"image_tokens":0,"cached_tokens":192},"completion_tokens_details":{"reasoning_tokens":670,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0},"num_sources_used":0},"system_fingerprint":"fp_f0c0da1d8a"}
+1|opencode-ai-free  | 📥 Zen response body: {
+1|opencode-ai-free  |   "id": "2fdb9d25-7d70-83ad-fae5-442b9d6ba6ab",
+1|opencode-ai-free  |   "object": "chat.completion",
+1|opencode-ai-free  |   "created": 1763633717,
+1|opencode-ai-free  |   "model": "grok-code",
+1|opencode-ai-free  |   "choices": [
+1|opencode-ai-free  |     {
+1|opencode-ai-free  |       "index": 0,
+1|opencode-ai-free  |       "message": {
+1|opencode-ai-free  |         "role": "assistant",
+1|opencode-ai-free  |         "content": "{\n  \"thought\": \"The topic 'indian sites' is ambiguous and could refer to historical, archaeological, or tourist sites in India. No prior information available. I need to search for practical guides or tutorials on Indian sites to clarify and gather beginner-friendly content.\",\n  \"action\": \"search\",\n  \"actionDetails\": \"indian sites guide\",\n  \"nextThoughtNeeded\": true,\n  \"totalThoughts\": 5,\n  \"finalAnswer\": \"\",\n  \"confidence\": 10\n}",
+1|opencode-ai-free  |         "refusal": null
+1|opencode-ai-free  |       },
+1|opencode-ai-free  |       "finish_reason": "stop"
+1|opencode-ai-free  |     }
+1|opencode-ai-free  |   ],
+1|opencode-ai-free  |   "usage": {
+1|opencode-ai-free  |     "prompt_tokens": 610,
+1|opencode-ai-free  |     "completion_tokens": 100,
+1|opencode-ai-free  |     "total_tokens": 1380,
+1|opencode-ai-free  |     "prompt_tokens_details": {
+1|opencode-ai-free  |       "text_tokens": 610,
+1|opencode-ai-free  |       "audio_tokens": 0,
+1|opencode-ai-free  |       "image_tokens": 0,
+1|opencode-ai-free  |       "cached_tokens": 192
+1|opencode-ai-free  |     },
+1|opencode-ai-free  |     "completion_tokens_details": {
+1|opencode-ai-free  |       "reasoning_tokens": 670,
+1|opencode-ai-free  |       "audio_tokens": 0,
+1|opencode-ai-free  |       "accepted_prediction_tokens": 0,
+1|opencode-ai-free  |       "rejected_prediction_tokens": 0
+1|opencode-ai-free  |     },
+1|opencode-ai-free  |     "num_sources_used": 0
+1|opencode-ai-free  |   },
+1|opencode-ai-free  |   "system_fingerprint": "fp_f0c0da1d8a"
+1|opencode-ai-free  | }
+1|opencode-ai-free  | ✅ Chat completion response sent to ::1: {
+1|opencode-ai-free  |   model: 'grok-code',
+1|opencode-ai-free  |   tokens: {
+1|opencode-ai-free  |     prompt_tokens: 610,
+1|opencode-ai-free  |     completion_tokens: 100,
+1|opencode-ai-free  |     total_tokens: 1380,
+1|opencode-ai-free  |     prompt_tokens_details: {
+1|opencode-ai-free  |       text_tokens: 610,
+1|opencode-ai-free  |       audio_tokens: 0,
+1|opencode-ai-free  |       "image_tokens": 0,
+1|opencode-ai-free  |       "cached_tokens": 192
+1|opencode-ai-free  |     },
+1|opencode-ai-free  |     completion_tokens_details: {
+1|opencode-ai-free  |       reasoning_tokens: 670,
+1|opencode-ai-free  |       audio_tokens: 0,
+1|opencode-ai-free  |       accepted_prediction_tokens: 0,
+1|opencode-ai-free  |       rejected_prediction_tokens: 0
+1|opencode-ai-free  |     },
+1|opencode-ai-free  |     num_sources_used: 0
+1|opencode-ai-free  |   },
+1|opencode-ai-free  |   responseLength: 433,
+1|opencode-ai-free  |   toolCalls: undefined,
+1|opencode-ai-free  |   status: 'success'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | ::1 - - [20/Nov/2025:10:15:28 +0000] "POST /v1/chat/completions HTTP/1.1" 200 1044 "-" "axios/1.13.2"
+1|opencode-ai-free  | 🔄 Chat completion request from ::1: {
+1|opencode-ai-free  |   model: 'grok-code',
+1|opencode-ai-free  |   messageCount: 2,
+1|opencode-ai-free  |   stream: false,
+1|opencode-ai-free  |   toolsCount: undefined,
+1|opencode-ai-free  |   userAgent: 'axios/1.13.2',
+1|opencode-ai-free  |   timestamp: '2025-11-20T10:15:32.576Z'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | 📤 Sending to Zen: {
+1|opencode-ai-free  |   body: '{\n' +
+1|opencode-ai-free  |     '  "model": "grok-code",\n' +
+1|opencode-ai-free  |     '  "messages": [\n' +
+1|opencode-ai-free  |     '    {\n' +
+1|opencode-ai-free  |     '      "role": "system",\n' +
+1|opencode-ai-free  |     `      "content": "You are conducting deep research on: \\"indian sites\\"\\nCurrent date and time: Thursday, November 20, 2025 at 03:45:32 PM\\n\\nCurrent progress: 2/5 thoughts completed\\nSources found: 0\\nWeb search: ENABLED\\n\\nThought history:\\nThought 1: The topic 'indian sites' is ambiguous and could refer to historical, archaeological, or tourist sites in India. No prior information available. I need to search for practical guides or tutorials on Indian sites to clarify and gather beginner-friendly content. | Action: search | Result: Web search failed: Web search failed: Invalid response format from web search API. Try searching you...\\n\\nInstructions for this research step:\\n1. Analyze what information is still needed\\n2. Plan the next research action (search, read_url, analyze, extract_links)\\n3. Be specific about what you're looking for - focus on practical, beginner-friendly content (tutorials, guides, documentation) rather than academic papers or research articles\\n\\nAvailable actions:\\n- \\"search\\": Search the web for specific terms (provide concise, direct search queries like \\"Next.js documentation\\" not long sentences)\\n- \\"read_url\\": Read content from a specific URL (provide clean URLs without extra text)\\n- \\"analyze\\": Analyze existing information\\n- \\"extract_links\\": Extract links from recently read content\\n\\nFor search queries: Keep them short and direct (2-5 words maximum). Focus on practical content. Examples: \\"Next.js tutorial\\", \\"React beginner guide\\", \\"Python basics course\\", \\"JavaScript docs\\"\\n\\nIMPORTANT: Avoid academic/research content. Prioritize tutorials, guides, documentation, and practical examples over research papers, academic journals, or scholarly articles. If web search fails (times out, network errors, etc.), immediately switch to search_local to search through the user's personal resources.\\n\\nReturn JSON:\\n{\\n  \\"thought\\": \\"Your current analysis and plan\\",\\n  \\"action\\": \\"search|read_url|analyze|extract_links\\",\\n  \\"actionDetails\\": \\"CONCISE details - for search: 2-5 word practical query, for read_url: clean URL only\\",\\n  \\"nextThoughtNeeded\\": true/false,\\n  \\"totalThoughts\\": estimated_total,\\n  \\"finalAnswer\\": \\"ONLY if confident (80%+), provide final answer\\",\\n  \\"confidence\\": 0-100\\n}"\n` +
+1|opencode-ai-free  |     '    },\n' +
+1|opencode-ai-free  |     '    {\n' +
+1|opencode-ai-free  |     '      "role": "user",\n' +
+1|opencode-ai-free  |     '      "content": "Execute thought step 2 for: indian sites"\n' +
+1|opencode-ai-free  |     '    }\n' +
+1|opencode-ai-free  |     '  ],\n' +
+1|opencode-ai-free  |     '  "stream": false\n' +
+1|opencode-ai-free  |     '}'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | 📥 Zen response status: 500 Internal Server Error
+1|opencode-ai-free  | 📥 Zen response headers: {
+1|opencode-ai-free  |   'cf-placement': 'local-ORD',
+1|opencode-ai-free  |   'cf-ray': '9a172fd2fdd4ca09-ORD',
+1|opencode-ai-free  |   connection: 'keep-alive',
+1|opencode-ai-free  |   'content-length': '115',
+1|opencode-ai-free  |   'content-type': 'text/plain;charset=UTF-8',
+1|opencode-ai-free  |   date: 'Thu, 20 Nov 2025 10:15:34 GMT',
+1|opencode-ai-free  |   server: 'cloudflare',
+1|opencode-ai-free  |   vary: 'accept-encoding'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | Body used before read: false
+1|opencode-ai-free  | Body used after text: false
+1|opencode-ai-free  | 📥 Zen response text: {"type":"error","error":{"type":"error","message":"Cannot read properties of undefined (reading 'prompt_tokens')"}}
+1|opencode-ai-free  | ❌ Chat completion error for ::1: {
+1|opencode-ai-free  |   error: `Zen API error: 500 Internal Server Error - {"type":"error","error":{"type":"error","message":"Cannot read properties of undefined (reading 'prompt_tokens')"}}`,
+1|opencode-ai-free  |   model: 'grok-code',
+1|opencode-ai-free  |   timestamp: '2025-11-20T10:15:34.612Z'
+1|opencode-ai-free  | }
+1|opencode-ai-free  | ::1 - - [20/Nov/2025:10:15:34 +0000] "POST /v1/chat/completions HTTP/1.1" 500 211 "-" "axios/1.13.2"
+                </pre>
+            </div>
+        </div>
+
+        <footer class="mt-8 text-center text-gray-500 text-sm">
+            <p>OpenCode Wrapper - Log Viewer</p>
+        </footer>
+    </div>
+</body>
+</html>
