@@ -132,8 +132,8 @@ async function start() {
   const providerManager = new ProviderManager();
   console.log('🚀 Provider Manager initialized with', Object.keys(providerManager.providers).length, 'providers');
 
-  // Setup cron job to ping URLs every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  // Setup cron job to ping URLs every minute
+  cron.schedule('* * * * *', async () => {
     const pingUrls = process.env.PING_URLS;
     if (!pingUrls) return;
 
