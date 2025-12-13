@@ -9,6 +9,7 @@ import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import ProviderManager from './providerManager.js';
+import cron from 'node-cron';
 
 const app = express();
 
@@ -130,6 +131,22 @@ async function start() {
   // Initialize Provider Manager
   const providerManager = new ProviderManager();
   console.log('🚀 Provider Manager initialized with', Object.keys(providerManager.providers).length, 'providers');
+
+  // Setup cron job to ping URLs every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    const pingUrls = process.env.PING_URLS;
+    if (!pingUrls) return;
+
+    const urls = pingUrls.split(',').map(url => url.trim());
+    for (const url of urls) {
+      try {
+        const response = await fetch(url);
+        console.log(`✅ Ping successful: ${url} - Status: ${response.status}`);
+      } catch (error) {
+        console.error(`❌ Ping failed: ${url} - Error: ${error.message}`);
+      }
+    }
+  });
 
   // No client needed for local models - we'll make direct HTTP calls
 
