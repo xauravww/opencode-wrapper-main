@@ -485,27 +485,29 @@ class ProviderManager {
       this.updateStats(providerName, { success, responseTime, isAuthError });
 
       // DB Logging
-      try {
-        const db = (await import('./db/index.js')).default;
+      if (!options.skipLog) {
+        try {
+          const db = (await import('./db/index.js')).default;
 
-        // Extract wrapperKeyId from options if available
-        const wrapperKeyId = options.wrapperKeyId || null;
+          // Extract wrapperKeyId from options if available
+          const wrapperKeyId = options.wrapperKeyId || null;
 
-        db.prepare(`
-             INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           `).run(
-          wrapperKeyId,
-          providerName,
-          config.models[0], // approximate model
-          usage.prompt_tokens || 0,
-          usage.completion_tokens || 0,
-          responseTime,
-          success ? 200 : 500,
-          finalCost
-        );
-      } catch (err) {
-        console.error('DB Log Error:', err.message);
+          db.prepare(`
+               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             `).run(
+            wrapperKeyId,
+            providerName,
+            config.models[0], // approximate model
+            usage.prompt_tokens || 0,
+            usage.completion_tokens || 0,
+            responseTime,
+            success ? 200 : 500,
+            finalCost
+          );
+        } catch (err) {
+          console.error('DB Log Error:', err.message);
+        }
       }
     }
   }
@@ -547,7 +549,8 @@ class ProviderManager {
 
           await this.makeRequest(providerName, '/models', {
             method: 'GET',
-            signal: controller.signal
+            signal: controller.signal,
+            skipLog: true // Don't log health checks to DB
           });
 
           clearTimeout(timeout);
