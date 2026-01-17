@@ -217,9 +217,35 @@ const verifyWrapperKey = (req, res, next) => {
 async function start() {
   // Initialize Provider Manager
   const providerManager = new ProviderManager();
-  console.log('🚀 Provider Manager initialized');
+  await providerManager.reloadKeys(); // Load dynamic keys from DB
+  initDB();
 
-  // ... (Cron job code remains)
+  // Log Cleanup Task (Daily at midnight)
+  cron.schedule('0 0 * * *', () => {
+    console.log('🧹 Running daily log cleanup...');
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const result = db.prepare('DELETE FROM request_logs WHERE timestamp < ?').run(thirtyDaysAgo.toISOString());
+      console.log(`✅ Deleted ${result.changes} old request logs`);
+    } catch (error) {
+      console.error('❌ Log cleanup failed:', error);
+    }
+  });
+
+  // Run cleanup once on startup
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const result = db.prepare('DELETE FROM request_logs WHERE timestamp < ?').run(thirtyDaysAgo.toISOString());
+    if (result.changes > 0) console.log(`🧹 Cleanup on startup: Deleted ${result.changes} old logs`);
+  } catch (e) { console.error('Startup cleanup error:', e); }
+
+  if (process.env.NODE_ENV !== 'test') {
+    providerManager.startPeriodicUpdates();
+    providerManager.startHealthChecks();
+  }
 
   // --- AUTH ROUTES ---
   app.post('/api/auth/login', (req, res) => {
@@ -267,11 +293,18 @@ async function start() {
         GROUP BY date(timestamp)
      `).all();
 
+    // Get active/configured providers
+    const providerStatus = providerManager.getProviderStatus();
+    const configuredProviders = Object.values(providerStatus).filter(p => p.configured).length;
+    const activeProviders = Object.values(providerStatus).filter(p => p.configured && p.health_status === 'healthy').length;
+
     res.json({
       totalRequests,
       totalCost,
       avgLatency,
-      dailyCosts
+      dailyCosts,
+      configuredProviders,
+      activeProviders
     });
   });
 
@@ -641,7 +674,7 @@ async function start() {
     const startTime = Date.now();
 
     try {
-      const { messages, model, stream, tools } = req.body;
+      const { messages, model, stream, tools, temperature, max_tokens } = req.body;
 
       console.log(`🔄 Chat completion request from ${req.ip}:`, {
         model: model,

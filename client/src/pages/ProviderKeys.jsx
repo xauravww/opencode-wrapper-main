@@ -8,7 +8,7 @@ export default function ProviderKeys() {
     const [adding, setAdding] = useState(false);
 
     const providers = [
-        'openai', 'anthropic', 'google', 'mistral', 'groq', 'together', 'fireworks', 'nvidia', 'deepseek', 'openrouter'
+        'openai', 'anthropic', 'google', 'mistral', 'groq', 'cerebras', 'together', 'fireworks', 'nvidia', 'deepseek', 'openrouter', 'cohere', 'opencode'
     ];
 
     const [formData, setFormData] = useState({ provider: 'openai', key: '' });
@@ -74,12 +74,9 @@ export default function ProviderKeys() {
                             value={formData.provider}
                             onChange={e => setFormData({ ...formData, provider: e.target.value })}
                         >
-                            <option value="openai">OpenAI</option>
-                            <option value="groq">Groq</option>
-                            <option value="anthropic">Anthropic</option>
-                            <option value="mistral">Mistral</option>
-                            <option value="cerebras">Cerebras</option>
-                            <option value="gemini">Gemini</option>
+                            {providers.sort().map(p => (
+                                <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                            ))}
                         </select>
                     </div>
                     <div className="flex-[2] space-y-2">
@@ -153,8 +150,8 @@ export default function ProviderKeys() {
                                                 <button
                                                     onClick={() => handleToggleStatus(key.id, key.is_active)}
                                                     className={`flex items-center gap-1 text-xs font-bold uppercase px-2 py-1 rounded transition-colors ${key.is_active
-                                                            ? 'bg-secondary/20 text-secondary hover:bg-secondary/30'
-                                                            : 'bg-white/10 text-textDim hover:bg-white/20'
+                                                        ? 'bg-secondary/20 text-secondary hover:bg-secondary/30'
+                                                        : 'bg-white/10 text-textDim hover:bg-white/20'
                                                         }`}
                                                 >
                                                     {key.is_active ? <><CheckCircle size={12} /> Active</> : <><XCircle size={12} /> Inactive</>}

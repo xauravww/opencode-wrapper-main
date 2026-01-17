@@ -107,8 +107,8 @@ export default function Dashboard() {
                 />
                 <StatCard
                     title="Active Providers"
-                    value={Object.values(providers).filter(p => p.health_status === 'healthy').length}
-                    subValue={`out of ${Object.keys(providers).length} configured`}
+                    value={stats.activeProviders}
+                    subValue={`out of ${stats.configuredProviders} configured`}
                     icon={Server}
                     color="primary"
                 />

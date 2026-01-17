@@ -1,17 +1,15 @@
 {
   "providers": {
     "groq": {
-      "priority": 128.50443019089573,
-      "speed_score": 27.7102,
+      "priority": 128.50115019089577,
+      "speed_score": 27.706100000000006,
       "error_rate": 0.04331864904552129,
-      "total_requests": 1382,
-      "successful_requests": 1323,
-      "avg_response_time": 722.898,
-      "last_updated": "2026-01-17T08:51:22.476Z",
+      "total_requests": 1384,
+      "successful_requests": 1325,
+      "avg_response_time": 722.939,
+      "last_updated": "2026-01-17T10:52:04.688Z",
       "health_status": "healthy",
       "response_times": [
-        444,
-        396,
         525,
         371,
         383,
@@ -1009,22 +1007,22 @@
         548,
         616,
         344,
-        496
+        496,
+        459,
+        422
       ],
       "sequential_errors": 0
     },
     "nvidia": {
-      "priority": 158.19963813804173,
-      "speed_score": 61.4534,
+      "priority": 158.21387813804174,
+      "speed_score": 61.471199999999996,
       "error_rate": 0.004815409309791332,
-      "total_requests": 1336,
-      "successful_requests": 1330,
-      "avg_response_time": 385.466,
-      "last_updated": "2026-01-17T08:51:22.188Z",
+      "total_requests": 1338,
+      "successful_requests": 1332,
+      "avg_response_time": 385.288,
+      "last_updated": "2026-01-17T10:52:04.458Z",
       "health_status": "healthy",
       "response_times": [
-        396,
-        168,
         246,
         326,
         310,
@@ -2022,22 +2020,22 @@
         243,
         232,
         163,
-        204
+        204,
+        195,
+        191
       ],
       "sequential_errors": 0
     },
     "gemini": {
-      "priority": 134.76743631500744,
-      "speed_score": 46.1246,
+      "priority": 134.76567631500743,
+      "speed_score": 46.122400000000006,
       "error_rate": 0.03566121842496285,
-      "total_requests": 1371,
-      "successful_requests": 1323,
-      "avg_response_time": 538.754,
-      "last_updated": "2026-01-17T08:51:22.320Z",
+      "total_requests": 1373,
+      "successful_requests": 1325,
+      "avg_response_time": 538.776,
+      "last_updated": "2026-01-17T10:52:04.795Z",
       "health_status": "healthy",
       "response_times": [
-        529,
-        526,
         483,
         523,
         700,
@@ -3035,7 +3033,9 @@
         602,
         267,
         177,
-        332
+        332,
+        523,
+        554
       ],
       "sequential_errors": 0
     },
@@ -4074,17 +4074,15 @@
       "response_times": []
     },
     "cerebras": {
-      "priority": 140.19275880379286,
-      "speed_score": 38.5524,
+      "priority": 140.18003880379285,
+      "speed_score": 38.536500000000004,
       "error_rate": 0.05324580598103574,
-      "total_requests": 1394,
-      "successful_requests": 1321,
-      "avg_response_time": 614.476,
-      "last_updated": "2026-01-17T08:51:22.920Z",
+      "total_requests": 1396,
+      "successful_requests": 1323,
+      "avg_response_time": 614.635,
+      "last_updated": "2026-01-17T10:52:05.345Z",
       "health_status": "healthy",
       "response_times": [
-        518,
-        424,
         419,
         615,
         432,
@@ -5082,7 +5080,9 @@
         438,
         381,
         411,
-        443
+        443,
+        549,
+        552
       ],
       "sequential_errors": 0
     },
@@ -5134,14 +5134,12 @@
       "priority": 65,
       "speed_score": 0,
       "error_rate": 0,
-      "total_requests": 1325,
-      "successful_requests": 1325,
-      "avg_response_time": 1124.803,
-      "last_updated": "2026-01-17T08:51:33.503Z",
+      "total_requests": 1327,
+      "successful_requests": 1327,
+      "avg_response_time": 1124.158,
+      "last_updated": "2026-01-17T10:52:05.965Z",
       "health_status": "healthy",
       "response_times": [
-        1123,
-        1755,
         1589,
         1142,
         1319,
@@ -6139,11 +6137,13 @@
         1106,
         1003,
         891,
-        1165
+        1165,
+        1064,
+        1169
       ],
       "sequential_errors": 0
     }
   },
-  "last_updated": "2026-01-17T08:51:33.503Z",
-  "version": 8155
+  "last_updated": "2026-01-17T10:52:05.965Z",
+  "version": 8165
 }

@@ -13,7 +13,7 @@ class ProviderManager {
       last_updated: new Date().toISOString(),
       version: 1
     };
-    this.statsFile = process.env.PROVIDER_STATS_FILE || path.join(__dirname, 'provider_stats.json');
+    this.statsFile = path.resolve(process.env.PROVIDER_STATS_FILE || path.join(__dirname, 'provider_stats.json'));
     this.speedWeightMultiplier = parseFloat(process.env.SPEED_WEIGHT_MULTIPLIER) || 0.6;
     this.errorPenaltyMultiplier = parseFloat(process.env.ERROR_PENALTY_MULTIPLIER) || 3.0;
     this.statsUpdateInterval = parseInt(process.env.STATS_UPDATE_INTERVAL) || 5000;
@@ -93,6 +93,8 @@ class ProviderManager {
         models: ['grok-code', 'code-supernova']
       }
     };
+
+    this.providers = providerConfigs;
 
     // Initialize provider stats if not exists
     Object.keys(this.providers).forEach(providerName => {
