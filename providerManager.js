@@ -1,4 +1,4 @@
-import fs from 'fs';
+import fs from 'fs'; // Kept for other uses if any, but removed stats file usage
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,19 +13,16 @@ class ProviderManager {
       last_updated: new Date().toISOString(),
       version: 1
     };
-    this.statsFile = path.resolve(process.env.PROVIDER_STATS_FILE || path.join(__dirname, 'provider_stats.json'));
+
+    // Config
     this.speedWeightMultiplier = parseFloat(process.env.SPEED_WEIGHT_MULTIPLIER) || 0.6;
     this.errorPenaltyMultiplier = parseFloat(process.env.ERROR_PENALTY_MULTIPLIER) || 3.0;
     this.statsUpdateInterval = parseInt(process.env.STATS_UPDATE_INTERVAL) || 5000;
     this.maxStatsHistory = parseInt(process.env.MAX_STATS_HISTORY) || 1000;
     this.healthCheckInterval = parseInt(process.env.HEALTH_CHECK_INTERVAL) || 30000;
 
-    this.pendingUpdates = [];
-    this.isUpdating = false;
-    this.saveStatsTimeout = null;
-
     this.initializeProviders();
-    this.loadStats();
+    this.loadStats().catch(console.error);
     this.startPeriodicUpdates();
     this.startHealthChecks();
   }
@@ -96,7 +93,7 @@ class ProviderManager {
 
     this.providers = providerConfigs;
 
-    // Initialize provider stats if not exists
+    // Initialize in-memory structure
     Object.keys(this.providers).forEach(providerName => {
       // Ensure local object structure exists
       if (!this.stats.providers[providerName]) {
@@ -115,7 +112,6 @@ class ProviderManager {
       this.providers[providerName] = { ...providerConfigs[providerName] }; // Deep copy
     });
 
-    // Load dynamic keys immediately (sync-ish or fire-and-forget)
     this.reloadKeys().catch(console.error);
   }
 
@@ -124,12 +120,6 @@ class ProviderManager {
       const db = (await import('./db/index.js')).default;
       const rows = db.prepare('SELECT provider_name, api_key FROM provider_keys WHERE is_active = 1').all();
 
-      // Reset to ENV keys first? Or just append?
-      // Let's reset to ensure we don't duplicate or keep deleted keys eternally (if we only append)
-      // But re-parsing ENV is annoying.
-      // Let's just assume we want to ADD DB keys to the pool.
-
-      // Group by provider
       const dbKeys = {};
       rows.forEach(row => {
         if (!dbKeys[row.provider_name]) dbKeys[row.provider_name] = [];
@@ -137,18 +127,6 @@ class ProviderManager {
       });
 
       Object.keys(this.providers).forEach(p => {
-        // Start with ENV keys (re-parse from process.env if possible, but we don't store raw strings)
-        // Simpler: Just ensure we merge uniq.
-        // Actually, we should probably re-read ENV to support "removing" keys from ENV requires restart anyway.
-        // So we take current apiKeys (which are ENV based initially) and merging DB keys.
-        // Wait, if I call this multiple times, I will keep adding DB keys.
-        // So I need to store "base" keys or clear them.
-
-        // Hack: We rely on the fact that existing `apiKeys` array in memory *IS* the working set.
-        // If I want to support removal, I should re-init.
-        // Let's just APPEND unique keys for now (easiest for "Add key").
-        // Removal via DB won't work perfectly without re-init, but "Add" is the main use case.
-
         if (dbKeys[p]) {
           const currentKeys = new Set(this.providers[p].apiKeys);
           dbKeys[p].forEach(k => currentKeys.add(k));
@@ -175,60 +153,91 @@ class ProviderManager {
 
   async loadStats() {
     try {
-      if (fs.existsSync(this.statsFile)) {
-        const data = await fs.promises.readFile(this.statsFile, 'utf8');
-        const loadedStats = JSON.parse(data);
+      const db = (await import('./db/index.js')).default;
 
-        // Merge loaded stats without overwriting initialized providers
-        if (loadedStats.providers) {
-          for (const provider in loadedStats.providers) {
-            if (!this.stats.providers[provider]) {
-              this.stats.providers[provider] = loadedStats.providers[provider];
-            } else {
-              // Merge existing provider stats, preserving in-memory arrays if needed
-              // However, typically on load we just take what's in the file
-              Object.assign(this.stats.providers[provider], loadedStats.providers[provider]);
-            }
+      const rows = db.prepare('SELECT * FROM provider_stats').all();
+
+      rows.forEach(row => {
+        const providerName = row.provider_name;
+        if (this.stats.providers[providerName]) {
+          const pStats = this.stats.providers[providerName];
+          pStats.priority = row.priority;
+          pStats.speed_score = row.speed_score;
+          pStats.error_rate = row.error_rate;
+          pStats.total_requests = row.total_requests;
+          pStats.successful_requests = row.successful_requests;
+          pStats.avg_response_time = row.avg_response_time;
+          pStats.health_status = row.health_status;
+          pStats.last_updated = row.last_updated;
+
+          try {
+            pStats.response_times = row.response_times_json ? JSON.parse(row.response_times_json) : [];
+          } catch (e) {
+            pStats.response_times = [];
           }
         }
-
-        this.stats.last_updated = loadedStats.last_updated || this.stats.last_updated;
-        this.stats.version = loadedStats.version || this.stats.version;
-
-        console.log('✅ Provider stats loaded from file');
-      } else {
-        await this.saveStats(true); // Force immediate save on creation
-        console.log('📝 Created new provider stats file');
-      }
+      });
+      console.log('✅ Provider stats loaded from DB');
     } catch (error) {
-      console.error('❌ Error loading provider stats:', error.message);
+      console.error('❌ Error loading provider stats from DB:', error.message);
     }
   }
 
-  // Modified to be non-blocking and debounced
   async saveStats(force = false) {
-    if (this.saveStatsTimeout && !force) {
-      return; // Already scheduled
-    }
+    // In DB mode, we write updates immediately on change (or batched).
+    // The previous implementation debounced file writes.
+    // For DB, concurrent writes are handled by WAL mode.
+    // However, frequent writes (every request) might be heavy if not needed.
+    // Let's implement a simple debounce for DB updates too, to batch updates per provider?
+    // Actually, `updateStats` calls `saveStats`.
+    // Let's keep the debounce logic but write to DB.
+
+    if (this.saveStatsTimeout && !force) return;
 
     const performSave = async () => {
       try {
-        const tempFile = `${this.statsFile}.tmp`;
-        // Remove temp file if exists to avoid conflicts
-        try {
-          await fs.promises.unlink(tempFile);
-        } catch { }
-        await fs.promises.writeFile(tempFile, JSON.stringify(this.stats, null, 2));
-        await fs.promises.rename(tempFile, this.statsFile);
+        const db = (await import('./db/index.js')).default;
+
+        const updateStmt = db.prepare(`
+          INSERT INTO provider_stats (
+            provider_name, priority, speed_score, error_rate, total_requests, successful_requests,
+            avg_response_time, health_status, last_updated, response_times_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider_name) DO UPDATE SET
+            priority=excluded.priority,
+            speed_score=excluded.speed_score,
+            error_rate=excluded.error_rate,
+            total_requests=excluded.total_requests,
+            successful_requests=excluded.successful_requests,
+            avg_response_time=excluded.avg_response_time,
+            health_status=excluded.health_status,
+            last_updated=excluded.last_updated,
+            response_times_json=excluded.response_times_json
+        `);
+
+        // Transaction for better performance on bulk update
+        const transaction = db.transaction((providers) => {
+          for (const [name, stats] of Object.entries(providers)) {
+            if (!this.providers[name]) continue; // Only configured providers
+            updateStmt.run(
+              name,
+              stats.priority,
+              stats.speed_score,
+              stats.error_rate,
+              stats.total_requests,
+              stats.successful_requests,
+              stats.avg_response_time,
+              stats.health_status,
+              stats.last_updated,
+              JSON.stringify(stats.response_times)
+            );
+          }
+        });
+
+        transaction(this.stats.providers);
+        // console.log('✅ Provider stats saved to DB'); // Too noisy if every 5s
       } catch (error) {
-        console.error('❌ Error saving provider stats:', error.message);
-        // Fallback: try to write directly if rename fails
-        try {
-          await fs.promises.writeFile(this.statsFile, JSON.stringify(this.stats, null, 2));
-          console.log('✅ Stats saved via fallback method');
-        } catch (fallbackError) {
-          console.error('❌ Fallback save also failed:', fallbackError.message);
-        }
+        console.error('❌ Error saving provider stats to DB:', error.message);
       } finally {
         this.saveStatsTimeout = null;
       }
@@ -239,10 +248,9 @@ class ProviderManager {
       return performSave();
     }
 
-    this.saveStatsTimeout = setTimeout(performSave, 2000); // Debounce by 2 seconds
+    this.saveStatsTimeout = setTimeout(performSave, 2000);
   }
 
-  // Modified to be completely synchronous/in-memory, triggering a background save
   updateStats(providerName, requestData) {
     const providerStats = this.stats.providers[providerName];
     if (!providerStats) return;
@@ -253,26 +261,18 @@ class ProviderManager {
       providerStats.successful_requests++;
       providerStats.response_times.push(requestData.responseTime);
 
-      // Keep only recent response times
       if (providerStats.response_times.length > this.maxStatsHistory) {
         providerStats.response_times = providerStats.response_times.slice(-this.maxStatsHistory);
       }
 
-      // Update average response time
       providerStats.avg_response_time = providerStats.response_times.reduce((a, b) => a + b, 0) / providerStats.response_times.length;
-
-      // Update speed score (lower response time = higher score)
-      const normalizedTime = Math.min(1000, providerStats.avg_response_time) / 10; // 0-100 scale
+      const normalizedTime = Math.min(1000, providerStats.avg_response_time) / 10;
       providerStats.speed_score = Math.max(0, 100 - normalizedTime);
-
-      // Reset sequential errors if success
       providerStats.sequential_errors = 0;
 
     } else {
-      // Track error
-      // requestData.isAuthError can be passed to immediately penalize
       if (requestData.isAuthError) {
-        providerStats.error_rate = 1.0; // Mark as dead immediately
+        providerStats.error_rate = 1.0;
         providerStats.health_status = 'unhealthy';
       } else {
         providerStats.error_rate = (providerStats.total_requests - providerStats.successful_requests) / providerStats.total_requests;
@@ -280,17 +280,12 @@ class ProviderManager {
       providerStats.sequential_errors = (providerStats.sequential_errors || 0) + 1;
     }
 
-    // Update priority based on performance
     providerStats.priority = this.calculatePriority(providerName);
-
-    // Update health status
     providerStats.health_status = this.determineHealthStatus(providerStats);
-
     providerStats.last_updated = new Date().toISOString();
     this.stats.last_updated = new Date().toISOString();
     this.stats.version++;
 
-    // Trigger save (non-blocking)
     this.saveStats();
   }
 
@@ -300,7 +295,7 @@ class ProviderManager {
 
     const speedWeight = stats.speed_score * this.speedWeightMultiplier;
     const errorPenalty = (stats.error_rate * 100) * this.errorPenaltyMultiplier;
-    const healthyBonus = stats.health_status === 'healthy' ? 20 : 0; // Bonus for being confirmed healthy
+    const healthyBonus = stats.health_status === 'healthy' ? 20 : 0;
 
     return Math.max(0, Math.min(200, basePriority + speedWeight - errorPenalty + healthyBonus));
   }
@@ -312,30 +307,20 @@ class ProviderManager {
     return 'healthy';
   }
 
-  // New method to return ordered list of providers
   getOrderedProviders() {
     const eligibleProviders = Object.keys(this.providers).filter(providerName => {
       const config = this.providers[providerName];
       if (config.apiKeys.length === 0) return false;
-
-      // Include 'unhealthy' only if we are desperate? No, typically we skip them.
-      // But maybe we want to retry them if everything else fails?
-      // For getOrderedProviders, we return all configured providers, sorted by priority.
-      // The consumer will try them in order.
       return true;
     });
 
     return eligibleProviders.sort((a, b) => {
-      // Sort by priority descending
       const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
       if (priorityDiff !== 0) return priorityDiff;
-
-      // Tie-break with random to load balance equal priorities
       return Math.random() - 0.5;
     });
   }
 
-  // Deprecated but kept for compatibility just in case, but using new logic
   selectProvider(requestedModel = null) {
     const list = this.getOrderedProviders();
     return list.length > 0 ? list[0] : 'opencode';
@@ -345,23 +330,15 @@ class ProviderManager {
     const config = this.providers[providerName];
     if (!config || config.apiKeys.length === 0) return null;
 
-    // Rotate through API keys for load balancing
-    const keyIndex = Math.floor(Date.now() / 60000) % config.apiKeys.length; // Change key every minute
+    const keyIndex = Math.floor(Date.now() / 60000) % config.apiKeys.length;
     const apiKey = config.apiKeys[keyIndex];
 
-    return {
-      ...config,
-      apiKey,
-      keyIndex
-    };
+    return { ...config, apiKey, keyIndex };
   }
 
   getBestModelForProvider(providerName) {
     const config = this.providers[providerName];
-    if (!config || config.models.length === 0) return 'gpt-3.5-turbo'; // fallback
-
-    // Return the first model in the list (considered the best/default)
-    // Could eventually match against requestedModel to find closest match
+    if (!config || config.models.length === 0) return 'gpt-3.5-turbo';
     return config.models[0];
   }
 
@@ -380,12 +357,8 @@ class ProviderManager {
 
     try {
       const url = `${config.baseUrl}${endpoint}`;
-      const headers = {
-        'Content-Type': 'application/json',
-        ...options.headers
-      };
+      const headers = { 'Content-Type': 'application/json', ...options.headers };
 
-      // Add authorization header based on provider
       if (providerName === 'anthropic') {
         headers['x-api-key'] = config.apiKey;
         headers['anthropic-version'] = '2023-06-01';
@@ -395,21 +368,16 @@ class ProviderManager {
         headers['Authorization'] = `Bearer ${config.apiKey}`;
       }
 
-      // Add timeout signal if not present
       let signal = options.signal;
       let timeoutId = null;
 
       if (!signal) {
         const controller = new AbortController();
         signal = controller.signal;
-        timeoutId = setTimeout(() => controller.abort(), 15000); // 15s default timeout
+        timeoutId = setTimeout(() => controller.abort(), 15000);
       }
 
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal
-      });
+      const response = await fetch(url, { ...options, headers, signal });
 
       if (timeoutId) clearTimeout(timeoutId);
 
@@ -422,37 +390,27 @@ class ProviderManager {
 
       success = true;
 
-      // Handle streaming response
       if (options.stream) {
         return response;
       }
 
       const data = await response.json();
 
-      // DEBUG: Log usage data to file for inspection
-      if (providerName === 'cerebras' || providerName === 'groq') {
-        try {
-          const fs = require('fs');
-          fs.writeFileSync('debug_provider_response.json', JSON.stringify({ provider: providerName, data }, null, 2));
-        } catch (e) { }
-      }
-
-      // Pricing Defaults (USD per 1M tokens) - Updated Jan 2025
+      // Pricing Logic (Refined)
       const PRICING = {
-        'openai': { input: 2.50, output: 10.00 }, // blended gpt-4o
-        'anthropic': { input: 3.00, output: 15.00 }, // sonnet 3.5
-        'google': { input: 0.35, output: 1.05 }, // gemini 1.5 flash
+        'openai': { input: 2.50, output: 10.00 },
+        'anthropic': { input: 3.00, output: 15.00 },
+        'google': { input: 0.35, output: 1.05 },
         'mistral': { input: 2.00, output: 6.00 },
-        'groq': { input: 0.59, output: 0.79 }, // llama 3 70b
-        'cerebras': { input: 0.00, output: 0.00 }, // currently free tier
-        'together': { input: 0.20, output: 0.20 }, // llama 3 8b
-        'deepseek': { input: 0.14, output: 0.28 }, // deepseek chat
+        'groq': { input: 0.59, output: 0.79 },
+        'cerebras': { input: 0.00, output: 0.00 },
+        'together': { input: 0.20, output: 0.20 },
+        'deepseek': { input: 0.14, output: 0.28 },
         'default': { input: 0.50, output: 1.50 }
       };
 
       if (data.usage) {
         usage = data.usage;
-        // Calculate Cost
         const pricing = PRICING[providerName] || PRICING['default'];
         const inputCost = (usage.prompt_tokens / 1000000) * pricing.input;
         const outputCost = (usage.completion_tokens / 1000000) * pricing.output;
@@ -464,32 +422,16 @@ class ProviderManager {
     } catch (error) {
       const isTimeout = error.name === 'AbortError';
       console.error(`❌ ${providerName} request failed (Timeout: ${isTimeout}):`, error.message);
-
-      // DEBUG: Capture full provider error
-      try {
-        const fs = require('fs');
-        fs.writeFileSync('debug_error.json', JSON.stringify({
-          provider: providerName,
-          error: error.message,
-          stack: error.stack,
-          isTimeout
-        }, null, 2));
-      } catch (e) { }
-
-      // Construct clearer error for caller
       if (isTimeout) error.message = `Request timeout after 15000ms`;
       throw error;
     } finally {
       const responseTime = Date.now() - startTime;
-      // Fire and forget stats update
       this.updateStats(providerName, { success, responseTime, isAuthError });
 
       // DB Logging
       if (!options.skipLog) {
         try {
           const db = (await import('./db/index.js')).default;
-
-          // Extract wrapperKeyId from options if available
           const wrapperKeyId = options.wrapperKeyId || null;
 
           db.prepare(`
@@ -498,7 +440,7 @@ class ProviderManager {
              `).run(
             wrapperKeyId,
             providerName,
-            config.models[0], // approximate model
+            config.models[0],
             usage.prompt_tokens || 0,
             usage.completion_tokens || 0,
             responseTime,
@@ -515,15 +457,13 @@ class ProviderManager {
   startPeriodicUpdates() {
     setInterval(() => {
       this.saveStats(true).catch(error => {
-        console.error('❌ Error in periodic stats save:', error.message);
+        console.error('❌ Error in periodic stats save (DB):', error.message);
       });
     }, this.statsUpdateInterval);
   }
 
   startHealthChecks() {
-    // Run immediately on start
     this.performHealthChecks().catch(console.error);
-
     setInterval(() => {
       this.performHealthChecks().catch(error => {
         console.error('❌ Error in health checks:', error.message);
@@ -536,28 +476,23 @@ class ProviderManager {
       return this.providers[providerName].apiKeys.length > 0;
     });
 
-    // Run checks in parallel batches to avoid clogging
     const BATCH_SIZE = 3;
     for (let i = 0; i < providersToCheck.length; i += BATCH_SIZE) {
       const batch = providersToCheck.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(batch.map(async (providerName) => {
         try {
-          // Simple health check - try to get models list
-          // Use a short timeout for health checks
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout for health check
+          const timeout = setTimeout(() => controller.abort(), 5000);
 
           await this.makeRequest(providerName, '/models', {
             method: 'GET',
             signal: controller.signal,
-            skipLog: true // Don't log health checks to DB
+            skipLog: true
           });
 
           clearTimeout(timeout);
           console.log(`✅ ${providerName} health check passed`);
         } catch (error) {
-          // console.log(`⚠️ ${providerName} health check failed: ${error.message}`);
-          // Quiet failure logging to avoid spam
         }
       }));
     }

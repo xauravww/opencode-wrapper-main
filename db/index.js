@@ -19,11 +19,14 @@ export function initDB() {
     db.exec(schema);
 
     // Create default admin if not exists
-    const adminExists = db.prepare('SELECT id FROM admin_users WHERE username = ?').get('admin');
+    const adminUser = process.env.ADMIN_USER;
+    const adminPass = process.env.ADMIN_PASS;
+
+    const adminExists = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(adminUser);
     if (!adminExists) {
-        const hashedPassword = bcrypt.hashSync('admin123', 10);
-        db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run('admin', hashedPassword);
-        console.log('Admin user created (username: admin, password: admin123)');
+        const hashedPassword = bcrypt.hashSync(adminPass, 10);
+        db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run(adminUser, hashedPassword);
+        console.log(`Admin user created (username: ${adminUser})`);
     }
 }
 

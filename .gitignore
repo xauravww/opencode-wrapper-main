@@ -217,3 +217,8 @@ node_modules/
 # Local development files
 server.log
 *.log
+# Database
+opencode.db
+*.db
+*.sqlite
+*.sqlite3

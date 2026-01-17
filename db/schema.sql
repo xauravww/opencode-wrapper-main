@@ -35,3 +35,16 @@ CREATE TABLE IF NOT EXISTS request_logs (
   cost_usd REAL DEFAULT 0.0,
   FOREIGN KEY (wrapper_key_id) REFERENCES wrapper_keys(id)
 );
+
+CREATE TABLE IF NOT EXISTS provider_stats (
+  provider_name TEXT PRIMARY KEY,
+  priority INTEGER DEFAULT 50,
+  speed_score REAL DEFAULT 50,
+  error_rate REAL DEFAULT 0,
+  total_requests INTEGER DEFAULT 0,
+  successful_requests INTEGER DEFAULT 0,
+  avg_response_time REAL DEFAULT 1000,
+  health_status TEXT DEFAULT 'healthy',
+  last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+  response_times_json TEXT
+);

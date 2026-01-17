@@ -217,10 +217,12 @@ const verifyWrapperKey = (req, res, next) => {
 };
 
 async function start() {
+  // Initialize Database First
+  initDB();
+
   // Initialize Provider Manager
   const providerManager = new ProviderManager();
   await providerManager.reloadKeys(); // Load dynamic keys from DB
-  initDB();
 
   // Log Cleanup Task (Daily at midnight)
   cron.schedule('0 0 * * *', async () => {
