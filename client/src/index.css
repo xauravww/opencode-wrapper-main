@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #0a0a0a;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+@layer components {
+    .glass-panel {
+        @apply bg-surface/80 backdrop-blur-md border border-white/10 rounded-xl shadow-xl;
+    }
+
+    .input-field {
+        @apply bg-white/5 border border-white/10 rounded-lg px-4 py-3 outline-none focus:border-primary/50 text-text transition-all;
+        background-color: #121212;
+        /* Explicit bg for select options */
+    }
+
+    .btn-primary {
+        @apply bg-primary text-black font-semibold px-4 py-2 rounded-lg hover:bg-primary/90 transition-all;
+        box-shadow: 0 0 15px rgba(0, 209, 255, 0.3);
+    }
+
+    .btn-danger {
+        @apply bg-error/10 text-error border border-error/20 px-3 py-1 rounded-lg hover:bg-error/20 transition-all;
+    }
+}

@@ -163,40 +163,67 @@ This wrapper supports image analysis by embedding base64-encoded images directly
 
 3. View API documentation at `http://localhost:3010/api-docs`
 
-## Authentication
+## Authentication & Usage
 
-Include your API key in the Authorization header:
+To use the API, you must include a valid **Client API Key** in the `Authorization` header. You can generate these keys in the **Admin Panel > Client Keys**.
+
+**Format:**
 ```
-Authorization: Bearer your-api-key-here
+Authorization: Bearer sk-your_generated_client_key
 ```
 
-## Testing
+### Example Requests
 
-Run basic tests:
+#### 1. curl (Terminal)
 ```bash
-npm test
-```
-
-Test with curl:
-```bash
-# Text message
 curl -X POST http://localhost:3010/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your_generated_client_key" \
   -d '{
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "model": "grok-code"
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "model": "gpt-3.5-turbo"
   }'
+```
 
-# Image analysis
-curl -X POST http://localhost:3010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": [
-      {"type": "text", "text": "Describe this image:"},
-      {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="}}
-    ]}],
-    "model": "grok-code"
-  }'
+#### 2. Python (openai library)
+You can use the standard OpenAI Python library by changing the `base_url` and `api_key`.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:3010/v1",
+    api_key="sk-your_generated_client_key"
+)
+
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "user", "content": "Tell me a joke."}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+#### 3. Python (requests)
+```python
+import requests
+
+url = "http://localhost:3010/v1/chat/completions"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer sk-your_generated_client_key"
+}
+data = {
+    "model": "gpt-3.5-turbo",
+    "messages": [{"role": "user", "content": "Hello!"}]
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
 ```
 
 ## Requirements

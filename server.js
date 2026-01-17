@@ -1,6 +1,11 @@
 import fs from 'fs';
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import fetch from 'node-fetch';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import swaggerJsdoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
 import rateLimit from 'express-rate-limit';
@@ -10,8 +15,20 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import ProviderManager from './providerManager.js';
 import cron from 'node-cron';
+import { initDB } from './db/index.js';
+import db from './db/index.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { randomBytes, createHash } from 'crypto';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
+app.use(bodyParser.json());
+app.use(cors());
 
 // MCP Servers Configuration
 const mcpServers = {
@@ -127,11 +144,332 @@ const options = {
 const specs = swaggerJsdoc(options);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Middleware to verify JWT (for Admin API)
+const verifyToken = (req, res, next) => {
+  const token = req.headers['x-access-token'] || req.headers['authorization']?.split(' ')[1];
+
+  if (!token) {
+    return res.status(403).json({ error: 'A token is required for authentication' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid Token' });
+  }
+  return next();
+};
+
+// Middleware to verify Wrapper API Keys
+const verifyWrapperKey = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+
+  // 1. Allow Admin JWT (for Playground/Testing)
+  const token = req.headers['x-access-token'] || (authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null);
+  if (token) {
+    try {
+      jwt.verify(token, JWT_SECRET);
+      // Valid Admin Token -> Allow access with a "system" key ID for logging
+      req.wrapperKeyId = null; // or 0? 0 might mean system.
+      return next();
+    } catch (e) {
+      // Not a valid JWT, continue to check as API Key
+    }
+  }
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Log missing header failure
+    try {
+      db.prepare('INSERT INTO request_logs (provider, model, status_code, cost_usd) VALUES (?, ?, ?, ?)').run('system', 'auth-missing', 401, 0);
+    } catch (e) { console.error('Failed to log auth error:', e); }
+
+    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  }
+
+  const apiKey = authHeader.split(' ')[1];
+
+  // Check DB for custom keys
+  try {
+    // crypto is imported at top level
+    const hash = createHash('sha256').update(apiKey).digest('hex');
+
+    const keyRecord = db.prepare('SELECT id, is_active FROM wrapper_keys WHERE api_key_hash = ?').get(hash);
+
+    if (keyRecord && keyRecord.is_active) {
+      req.wrapperKeyId = keyRecord.id;
+      return next();
+    }
+  } catch (err) {
+    console.error("Key verification error:", err.message);
+  }
+
+  // Log invalid key failure
+  try {
+    db.prepare('INSERT INTO request_logs (provider, model, status_code, cost_usd) VALUES (?, ?, ?, ?)').run('system', 'auth-invalid', 401, 0);
+  } catch (e) { console.error('Failed to log auth error:', e); }
+
+  return res.status(401).json({ error: 'Invalid API Key' });
+};
+
 async function start() {
   // Initialize Provider Manager
   const providerManager = new ProviderManager();
-  console.log('🚀 Provider Manager initialized with', Object.keys(providerManager.providers).length, 'providers');
+  console.log('🚀 Provider Manager initialized');
 
+  // ... (Cron job code remains)
+
+  // --- AUTH ROUTES ---
+  app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    if (!(username && password)) {
+      res.status(400).send("All input is required");
+      return;
+    }
+
+    const user = db.prepare('SELECT * FROM admin_users WHERE username = ?').get(username);
+
+    console.log(`Login attempt for: ${username}`);
+    if (user) {
+      const passwordIsValid = bcrypt.compareSync(password, user.password_hash);
+      console.log(`User found. Password valid: ${passwordIsValid}`);
+
+      if (passwordIsValid) {
+        // Create token
+        const token = jwt.sign(
+          { user_id: user.id, username },
+          JWT_SECRET,
+          { expiresIn: "24h" }
+        );
+        res.json({ token, username });
+        return;
+      }
+    } else {
+      console.log('User not found');
+    }
+    res.status(400).send("Invalid Credentials");
+  });
+
+  // --- ADMIN ROUTES ---
+  app.get('/api/admin/stats', verifyToken, (req, res) => {
+    // Get global stats from DB
+    const totalRequests = db.prepare('SELECT COUNT(*) as count FROM request_logs').get().count;
+    const totalCost = db.prepare('SELECT SUM(cost_usd) as cost FROM request_logs').get().cost || 0;
+    const avgLatency = db.prepare('SELECT AVG(latency_ms) as lat FROM request_logs').get().lat || 0;
+
+    // Get cost over time (last 7 days)
+    const dailyCosts = db.prepare(`
+        SELECT date(timestamp) as date, SUM(cost_usd) as cost 
+        FROM request_logs 
+        WHERE timestamp >= date('now', '-7 days') 
+        GROUP BY date(timestamp)
+     `).all();
+
+    res.json({
+      totalRequests,
+      totalCost,
+      avgLatency,
+      dailyCosts
+    });
+  });
+
+  app.get('/api/admin/providers', verifyToken, (req, res) => {
+    // Return live status from memory + config from DB
+    const status = providerManager.getProviderStatus();
+    res.json(status);
+  });
+
+  // Manage Wrapper Keys (Client Keys)
+  app.get('/api/keys', verifyToken, (req, res) => {
+    const keys = db.prepare('SELECT id, name, prefix, is_active, created_at FROM wrapper_keys').all();
+    res.json(keys);
+  });
+
+  app.post('/api/keys', verifyToken, (req, res) => {
+    const { name, prefix: customPrefix } = req.body; // Renamed 'prefix' to 'customPrefix' to avoid conflict
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    // Generate keys
+    const apiKey = (customPrefix || 'sk') + '-' + randomBytes(16).toString('hex');
+    const apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
+    const displayPrefix = apiKey.substring(0, 10) + '...'; // Renamed 'prefix' to 'displayPrefix'
+
+    try {
+      db.prepare('INSERT INTO wrapper_keys (name, api_key_hash, prefix) VALUES (?, ?, ?)').run(name, apiKeyHash, displayPrefix);
+      res.json({ api_key: apiKey, name });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/keys/:id', verifyToken, (req, res) => {
+    db.prepare('DELETE FROM wrapper_keys WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // --- Provider Keys Management (Dynamic Backend Keys) ---
+  app.get('/api/admin/provider-keys', verifyToken, (req, res) => {
+    // 1. Get DB Keys
+    const dbKeys = db.prepare('SELECT id, provider_name, added_at as created_at, is_active FROM provider_keys').all();
+
+    // 2. Get Env Keys
+    const envKeys = [];
+    const envMap = {
+      'opencode': process.env.ZEN_API_KEY, // Zen Key
+      'openai': process.env.API_KEY || process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY,
+      'groq': process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY,
+      'anthropic': process.env.ANTHROPIC_API_KEYS || process.env.ANTHROPIC_API_KEY,
+      'mistral': process.env.MISTRAL_API_KEYS || process.env.MISTRAL_API_KEY,
+      'cerebras': process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY,
+      'gemini': process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY,
+      'nvidia': process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY,
+      'deepseek': process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY,
+      'together': process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY,
+      'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
+      'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
+      'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
+    };
+
+    Object.entries(envMap).forEach(([provider, keysStr]) => {
+      if (keysStr && typeof keysStr === 'string') {
+        const keys = keysStr.split(',').map(k => k.trim()).filter(k => k);
+        keys.forEach((key, index) => {
+          envKeys.push({
+            id: `env-${provider}-${index}`,
+            provider_name: provider,
+            created_at: null,
+            is_active: 1,
+            source: 'env',
+            api_key: 'sk-...' + key.slice(-4)
+          });
+        });
+      }
+    });
+
+    // Mark DB keys as source: 'db'
+    const formattedDbKeys = dbKeys.map(k => ({
+      ...k,
+      source: 'db',
+      api_key: '(hidden)' // We don't send actual DB keys to frontend for security
+    }));
+
+    res.json([...envKeys, ...formattedDbKeys]);
+  });
+
+  app.post('/api/admin/provider-keys', verifyToken, async (req, res) => {
+    const { provider_name, api_key } = req.body;
+    if (!provider_name || !api_key) return res.status(400).json({ error: 'Missing fields' });
+
+    try {
+      db.prepare('INSERT INTO provider_keys (provider_name, api_key) VALUES (?, ?)').run(provider_name, api_key);
+      // Trigger reload
+      await providerManager.reloadKeys();
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/admin/provider-keys/:id/status', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    if (id.startsWith('env-')) {
+      return res.status(400).json({ error: 'Cannot toggle Environment keys via UI. Update .env file.' });
+    }
+
+    try {
+      db.prepare('UPDATE provider_keys SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, id);
+      await providerManager.reloadKeys();
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/admin/provider-keys/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    if (id.toString().startsWith('env-')) {
+      return res.status(400).json({ error: 'Cannot delete Environment keys' });
+    }
+    db.prepare('DELETE FROM provider_keys WHERE id = ?').run(id);
+    await providerManager.reloadKeys(); // Reload keys after deleting
+    res.json({ success: true });
+  });
+
+  // --- Request Logs Explorer ---
+  app.get('/api/admin/logs', verifyToken, (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    // Filters (optional) 
+    const statusFilter = req.query.status ? `AND status_code = ${req.query.status}` : '';
+    const providerFilter = req.query.provider ? `AND provider = '${req.query.provider}'` : '';
+
+    const count = db.prepare(`SELECT COUNT(*) as count FROM request_logs WHERE 1=1 ${statusFilter} ${providerFilter}`).get().count;
+
+    const logs = db.prepare(`
+        SELECT 
+            r.id, 
+            r.provider, 
+            r.model, 
+            r.latency_ms, 
+            r.status_code, 
+            r.cost_usd, 
+            r.timestamp,
+            w.name as client_name
+        FROM request_logs r
+        LEFT JOIN wrapper_keys w ON r.wrapper_key_id = w.id
+        WHERE 1=1 ${statusFilter} ${providerFilter}
+        ORDER BY r.timestamp DESC
+        LIMIT ? OFFSET ?
+    `).all(limit, offset);
+
+    res.json({
+      data: logs,
+      pagination: {
+        page,
+        limit,
+        total_pages: Math.ceil(count / limit),
+        total_items: count
+      }
+    });
+  });
+
+  // --- Usage Aggregation Report ---
+  app.get('/api/admin/usage-report', verifyToken, (req, res) => {
+    // 1. Cost by Client
+    const costByClient = db.prepare(`
+        SELECT 
+            w.name as client_name, 
+            COUNT(*) as request_count, 
+            SUM(r.prompt_tokens) as prompt_tokens,
+            SUM(r.completion_tokens) as completion_tokens,
+            SUM(r.cost_usd) as total_cost
+        FROM request_logs r
+        LEFT JOIN wrapper_keys w ON r.wrapper_key_id = w.id
+        GROUP BY w.name
+        ORDER BY total_cost DESC
+    `).all();
+
+    // 2. Cost by Provider
+    const costByProvider = db.prepare(`
+        SELECT 
+            provider, 
+            COUNT(*) as request_count, 
+            SUM(cost_usd) as total_cost
+        FROM request_logs
+        GROUP BY provider
+        ORDER BY total_cost DESC
+    `).all();
+
+    res.json({ costByClient, costByProvider });
+  });
+
+  // ... (Cron job code remains)
   // Setup cron job to ping URLs every minute
   cron.schedule('* * * * *', async () => {
     const pingUrls = process.env.PING_URLS;
@@ -266,44 +604,6 @@ async function start() {
   });
 
   /**
-    * @swagger
-    * /v1/chat/completions:
-    *   post:
-    *     summary: Create a chat completion
-    *     description: Creates a completion for the chat message. Supports text and images (images embedded as base64 in text prompts).
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             properties:
-   *               messages:
-   *                 type: array
-   *                 items:
-   *                   type: object
-   *                   properties:
-   *                     role:
-   *                       type: string
-   *                       enum: [user, assistant]
-   *                     content:
-   *                       type: string
-   *               model:
-   *                 type: string
-   *                 example: gpt-3.5-turbo
-   *     responses:
-   *       200:
-   *         description: Successful response
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 id:
-   *                   type: string
-   *                 object:
-   *                   type: string
-   *                 created:
    *                   type: integer
    *                 model:
    *                   type: string
@@ -337,7 +637,7 @@ async function start() {
    */
 
 
-  app.post('/v1/chat/completions', async (req, res) => {
+  app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
     const startTime = Date.now();
 
     try {
@@ -357,165 +657,177 @@ async function start() {
         return res.status(400).json({ error: 'Messages array is required and cannot be empty' });
       }
 
-       // Use model from request or default (but we'll override with provider's best model)
-       const requestedModel = model || process.env.DEFAULT_MODEL || 'grok-code';
+      // Use model from request or default (but we'll override with provider's best model)
+      const requestedModel = model || process.env.DEFAULT_MODEL || 'grok-code';
 
-       // Process messages to flatten content to string, converting images to text
-       const processedMessages = messages.map(msg => {
-         if (Array.isArray(msg.content)) {
-           msg.content = msg.content.map(item => {
-             if (item.type === 'image_url') {
-               return '[Image: ' + item.image_url.url + ']';
-             }
-             return item.text;
-           }).join(' ');
-         }
-         return msg;
-       });
+      // Process messages to flatten content to string, converting images to text
+      const processedMessages = messages.map(msg => {
+        if (Array.isArray(msg.content)) {
+          msg.content = msg.content.map(item => {
+            if (item.type === 'image_url') {
+              return '[Image: ' + item.image_url.url + ']';
+            }
+            return item.text;
+          }).join(' ');
+        }
+        return msg;
+      });
 
-        // Try providers with fallback logic
-        let lastError = null;
-        const maxRetries = 1;
+      // Try providers with fallback logic
+      const orderedProviders = providerManager.getOrderedProviders();
 
-       for (let attempt = 0; attempt < maxRetries; attempt++) {
-         try {
-           const selectedProvider = providerManager.selectProvider();
-           const actualModel = providerManager.getBestModelForProvider(selectedProvider);
-           console.log(`🎯 Selected provider: ${selectedProvider} with model: ${actualModel} (attempt ${attempt + 1}/${maxRetries})`);
+      // Check for forced provider (Admin testing)
+      const forcedProvider = req.headers['x-force-provider'];
+      let providersToTry = orderedProviders.slice(0, 3);
 
-           const requestBody = {
-             model: actualModel,
-             messages: processedMessages,
-             stream: stream || false,
-             ...(tools && { tools })
-           };
+      if (forcedProvider) {
+        if (providerManager.providers[forcedProvider]) {
+          console.log(`⚠️ Forcing provider: ${forcedProvider}`);
+          providersToTry = [forcedProvider];
+        } else {
+          return res.status(400).json({ error: `Forced provider '${forcedProvider}' not configured or unknown` });
+        }
+      }
 
-           const result = await providerManager.makeRequest(selectedProvider, '/chat/completions', {
-             method: 'POST',
-             body: JSON.stringify(requestBody)
-           });
+      let lastError = null;
+      let success = false;
+      let responseSent = false;
 
-           // Override the model in response to match what user requested
-           if (result.model) {
-             result.model = requestedModel;
-           }
+      for (const selectedProvider of providersToTry) {
+        if (success) break;
 
-           console.log(`✅ Chat completion response sent to ${req.ip} via ${selectedProvider}:`, {
-             requestedModel,
-             actualModel,
-             tokens: result.usage,
-             responseLength: result.choices?.[0]?.message?.content?.length,
-             toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
-             totalTime: Date.now() - startTime,
-             status: 'success'
-           });
+        try {
+          const actualModel = providerManager.getBestModelForProvider(selectedProvider);
+          console.log(`🎯 Attempting provider: ${selectedProvider} with model: ${actualModel}`);
 
-           return res.json(result);
+          const result = await providerManager.makeRequest(selectedProvider, '/chat/completions', {
+            method: 'POST',
+            body: JSON.stringify({
+              model: actualModel,
+              messages: processedMessages, // Use processedMessages
+              temperature,
+              max_tokens,
+              stream: stream || false, // Keep original stream logic
+              ...(tools && { tools }) // Keep original tools logic
+            }),
+            // Pass ID for tracking
+            wrapperKeyId: req.wrapperKeyId
+          });
 
-         } catch (error) {
-           console.warn(`⚠️ Provider attempt ${attempt + 1} failed:`, error.message);
-           lastError = error;
+          // Override the model in response to match what user requested
+          if (result.model) {
+            result.model = requestedModel;
+          }
 
-           // If this is the last attempt, continue to fallback
-           if (attempt === maxRetries - 1) {
-             console.error(`❌ All provider attempts failed, trying fallback to opencode`);
-           }
-         }
-       }
+          console.log(`✅ Chat completion response sent to ${req.ip} via ${selectedProvider}:`, {
+            requestedModel,
+            actualModel,
+            tokens: result.usage,
+            responseLength: result.choices?.[0]?.message?.content?.length,
+            toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
+            totalTime: Date.now() - startTime,
+            status: 'success'
+          });
+
+          success = true;
+          responseSent = true;
+          return res.json(result);
+
+        } catch (error) {
+          console.warn(`⚠️ Provider ${selectedProvider} failed:`, error.message);
+          lastError = error;
+          // Continue to next provider in loop
+        }
+      }
+
+      // If we exhausted all providers
+      if (!success) {
+        console.error(`❌ All top providers failed, trying fallback to opencode`);
+      }
 
       // Final fallback to opencode if all providers failed
       try {
         console.log(`🔄 Falling back to opencode for ${req.ip}`);
 
-         const zenApiKey = process.env.ZEN_API_KEY;
-         if (!zenApiKey || zenApiKey === 'your-zen-api-key-here') {
-           throw new Error('Zen API key not configured. Please set ZEN_API_KEY in your .env file.');
-         }
+        const zenApiKey = process.env.ZEN_API_KEY;
+        if (!zenApiKey || zenApiKey === 'your-zen-api-key-here') {
+          throw new Error('Zen API key not configured. Please set ZEN_API_KEY in your .env file.');
+        }
 
-         const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
+        const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
 
-          // Use grok-code for opencode fallback
-          const fallbackRequestBody = {
-            model: 'grok-code',
-            messages: processedMessages,
-            stream: stream || false,
-            ...(tools && { tools })
-          };
+        // Use grok-code for opencode fallback
+        const fallbackRequestBody = {
+          model: 'grok-code',
+          messages: processedMessages,
+          stream: stream || false,
+          ...(tools && { tools })
+        };
 
-         console.log(`📤 Sending to Zen fallback:`, { body: JSON.stringify(fallbackRequestBody, null, 2) });
+        console.log(`📤 Sending to Zen fallback:`, { body: JSON.stringify(fallbackRequestBody, null, 2) });
 
-         const response = await fetch(`${zenBaseUrl}/chat/completions`, {
-           method: 'POST',
-           headers: {
-             'Content-Type': 'application/json',
-             'Authorization': `Bearer ${zenApiKey}`,
-           },
-           body: JSON.stringify(fallbackRequestBody)
-         });
+        const response = await fetch(`${zenBaseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${zenApiKey}`,
+          },
+          body: JSON.stringify(fallbackRequestBody)
+        });
 
-         if (!response.ok) {
-           const errorText = await response.text();
-           throw new Error(`Zen API error: ${response.status} ${response.statusText} - ${errorText}`);
-         }
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Zen API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
 
-         if (stream) {
-           // Handle streaming response
-           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-           res.setHeader('Cache-Control', 'no-cache');
-           res.setHeader('Connection', 'keep-alive');
-           console.log(`✅ Chat completion streaming fallback response started to ${req.ip} via opencode:`, {
-             model: requestedModel,
-             totalTime: Date.now() - startTime,
-             status: 'streaming'
-           });
-           // Pipe the ReadableStream to the response
-           await response.body.pipeTo(new WritableStream({
-             write(chunk) {
-               res.write(chunk);
-             },
-             close() {
-               res.end();
-             },
-             abort(err) {
-               console.error('Stream aborted:', err);
-               res.end();
-             }
-           }));
-         } else {
-           const result = await response.json();
-           console.log(`✅ Chat completion fallback response sent to ${req.ip} via opencode:`, {
-             model: requestedModel,
-             tokens: result.usage,
-             responseLength: result.choices?.[0]?.message?.content?.length,
-             toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
-             totalTime: Date.now() - startTime,
-             status: 'success'
-           });
-           res.json(result);
-         }
+        if (stream) {
+          // Handle streaming response
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+          console.log(`✅ Chat completion streaming fallback response started to ${req.ip} via opencode:`, {
+            model: requestedModel,
+            totalTime: Date.now() - startTime,
+            status: 'streaming'
+          });
+          // Use Node.js stream pipe
+          response.body.pipe(res);
+          return;
+        } else {
+          const result = await response.json();
+          console.log(`✅ Chat completion fallback response sent to ${req.ip} via opencode:`, {
+            model: requestedModel,
+            tokens: result.usage,
+            responseLength: result.choices?.[0]?.message?.content?.length,
+            toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
+            totalTime: Date.now() - startTime,
+            status: 'success'
+          });
+          res.json(result);
+        }
 
       } catch (fallbackError) {
         console.error(`❌ Final fallback also failed for ${req.ip}:`, fallbackError.message);
         throw fallbackError;
       }
 
-  } catch (error) {
-    console.error(`❌ Chat completion error for ${req.ip}:`, {
-      error: error.message,
-      model: req.body.model,
-      totalTime: Date.now() - startTime,
-      timestamp: new Date().toISOString()
-    });
+    } catch (error) {
+      console.error(`❌ Chat completion error for ${req.ip}:`, {
+        error: error.message,
+        model: req.body.model,
+        totalTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
 
-    // Send error response
-    res.status(500).json({
-      error: {
-        message: error.message || 'Internal server error',
-        type: error.name || 'internal_error'
-      }
-    });
-  }
-});
+      // Send error response
+      res.status(500).json({
+        error: {
+          message: error.message || 'Internal server error',
+          type: error.name || 'internal_error'
+        }
+      });
+    }
+  });
   // MCP Tool Execution Endpoint
   app.post('/v1/tools/execute', async (req, res) => {
     try {
@@ -610,6 +922,18 @@ async function start() {
         message: error.message
       });
     }
+  });
+
+  // Serve static files from React frontend
+  app.use(express.static(path.join(__dirname, 'client/dist')));
+
+  // Handle React routing, return all requests to React app
+  app.get(/.*/, (req, res) => {
+    // Skip API routes to avoid index.html being returned for API 404s
+    if (req.path.startsWith('/v1/') || req.path.startsWith('/api/') || req.path.startsWith('/admin/')) {
+      return res.status(404).json({ error: 'Endpoint not found' });
+    }
+    res.sendFile(path.join(__dirname, 'client/dist', 'index.html'));
   });
 
   const port = process.env.PORT || 3010;
