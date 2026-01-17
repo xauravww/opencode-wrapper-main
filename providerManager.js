@@ -35,7 +35,7 @@ class ProviderManager {
       groq: {
         baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
         apiKeys: this.parseApiKeys(process.env.GROQ_API_KEYS),
-        models: ['llama2-70b-4096', 'mixtral-8x7b-32768', 'gemma-7b-it', 'gpt-3.5-turbo', 'gpt-4']
+        models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
       },
       nvidia: {
         baseUrl: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
@@ -65,7 +65,7 @@ class ProviderManager {
       cerebras: {
         baseUrl: process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
         apiKeys: this.parseApiKeys(process.env.CEREBRAS_API_KEYS),
-        models: ['llama3.1-70b', 'llama3.1-8b', 'gpt-3.5-turbo', 'gpt-4']
+        models: ['llama-3.3-70b', 'llama3.1-8b', 'gpt-3.5-turbo', 'gpt-4']
       },
       anthropic: {
         baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1',
@@ -421,7 +421,21 @@ class ProviderManager {
       }
 
       success = true;
+
+      // Handle streaming response
+      if (options.stream) {
+        return response;
+      }
+
       const data = await response.json();
+
+      // DEBUG: Log usage data to file for inspection
+      if (providerName === 'cerebras' || providerName === 'groq') {
+        try {
+          const fs = require('fs');
+          fs.writeFileSync('debug_provider_response.json', JSON.stringify({ provider: providerName, data }, null, 2));
+        } catch (e) { }
+      }
 
       // Pricing Defaults (USD per 1M tokens) - Updated Jan 2025
       const PRICING = {
@@ -450,6 +464,18 @@ class ProviderManager {
     } catch (error) {
       const isTimeout = error.name === 'AbortError';
       console.error(`❌ ${providerName} request failed (Timeout: ${isTimeout}):`, error.message);
+
+      // DEBUG: Capture full provider error
+      try {
+        const fs = require('fs');
+        fs.writeFileSync('debug_error.json', JSON.stringify({
+          provider: providerName,
+          error: error.message,
+          stack: error.stack,
+          isTimeout
+        }, null, 2));
+      } catch (e) { }
+
       // Construct clearer error for caller
       if (isTimeout) error.message = `Request timeout after 15000ms`;
       throw error;

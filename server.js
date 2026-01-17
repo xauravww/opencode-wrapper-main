@@ -20,6 +20,7 @@ import db from './db/index.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, createHash } from 'crypto';
+import { trackStreamAndLog } from './utils/streamTracker.js';
 
 dotenv.config();
 
@@ -452,6 +453,8 @@ async function start() {
             r.latency_ms, 
             r.status_code, 
             r.cost_usd, 
+            r.prompt_tokens,
+            r.completion_tokens,
             r.timestamp,
             w.name as client_name
         FROM request_logs r
@@ -744,13 +747,53 @@ async function start() {
               ...(tools && { tools }) // Keep original tools logic
             }),
             // Pass ID for tracking
-            wrapperKeyId: req.wrapperKeyId
+            wrapperKeyId: req.wrapperKeyId,
+            stream: stream || false
           });
 
           // Override the model in response to match what user requested
           if (result.model) {
             result.model = requestedModel;
           }
+
+          // Handle Streaming Response
+          if (stream && result.body) {
+            console.log(`✅ Chat completion streaming response started to ${req.ip} via ${selectedProvider}:`, {
+              model: actualModel,
+              status: 'streaming'
+            });
+
+            // Set headers for SSE
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+
+            let nodeStream = result.body;
+            // Convert Web Stream to Node Stream if needed (Node 20+ native fetch)
+            if (typeof result.body.pipe !== 'function') {
+              const { Readable } = await import('stream');
+              try {
+                nodeStream = Readable.fromWeb(result.body);
+              } catch (e) {
+                console.warn('Failed to convert Web Stream to Node Stream, falling back to raw body:', e);
+              }
+            }
+
+            // Create a pseudo-response object for trackStreamAndLog if we replaced the body
+            const responseForTracker = { ...result, body: nodeStream };
+
+            trackStreamAndLog(responseForTracker, res, db, {
+              wrapperKeyId: req.wrapperKeyId,
+              provider: selectedProvider,
+              model: actualModel,
+              startTime: startTime,
+              ip: req.ip
+            });
+            success = true;
+            return; // Exit request handler, stream handles the rest
+          }
+
+          console.log(`🔍 Provider Response (${selectedProvider}):`, JSON.stringify(result, null, 2));
 
           console.log(`✅ Chat completion response sent to ${req.ip} via ${selectedProvider}:`, {
             requestedModel,
@@ -762,12 +805,67 @@ async function start() {
             status: 'success'
           });
 
+          // Log Successful Request to DB
+          try {
+            let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+
+            // DEBUG: Write usage to file
+            try {
+              const fs = require('fs');
+              fs.writeFileSync('debug_usage.json', JSON.stringify({ provider: selectedProvider, usage }, null, 2));
+            } catch (e) { }
+
+            let finalCost = 0;
+
+            // Pricing Defaults (USD per 1M tokens)
+            const PRICING = {
+              'openai': { input: 2.50, output: 10.00 },
+              'anthropic': { input: 3.00, output: 15.00 },
+              'google': { input: 0.35, output: 1.05 },
+              'mistral': { input: 2.00, output: 6.00 },
+              'groq': { input: 0.59, output: 0.79 },
+              'cerebras': { input: 0.00, output: 0.00 },
+              'together': { input: 0.20, output: 0.20 },
+              'deepseek': { input: 0.14, output: 0.28 },
+              'nvidia': { input: 0.65, output: 2.20 }, // Estimates
+              'default': { input: 0.50, output: 1.50 }
+            };
+
+            const pricing = PRICING[selectedProvider] || PRICING['default'];
+            const inputCost = (usage.prompt_tokens / 1000000) * pricing.input;
+            const outputCost = (usage.completion_tokens / 1000000) * pricing.output;
+            finalCost = inputCost + outputCost;
+
+            db.prepare(`
+               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             `).run(
+              req.wrapperKeyId,
+              selectedProvider,
+              actualModel,
+              usage.prompt_tokens || 0,
+              usage.completion_tokens || 0,
+              Date.now() - startTime,
+              200,
+              finalCost
+            );
+          } catch (logErr) {
+            console.error('Logging failed:', logErr);
+          }
+
           success = true;
           responseSent = true;
           return res.json(result);
 
         } catch (error) {
           console.warn(`⚠️ Provider ${selectedProvider} failed:`, error.message);
+
+          // DEBUG: Write error to file
+          try {
+            const fs = require('fs');
+            fs.writeFileSync('debug_error.json', JSON.stringify({ provider: selectedProvider, error: error.message, stack: error.stack }, null, 2));
+          } catch (e) { }
+
           lastError = error;
           // Continue to next provider in loop
         }
@@ -823,8 +921,14 @@ async function start() {
             totalTime: Date.now() - startTime,
             status: 'streaming'
           });
-          // Use Node.js stream pipe
-          response.body.pipe(res);
+
+          trackStreamAndLog(response, res, db, {
+            wrapperKeyId: req.wrapperKeyId,
+            provider: 'opencode', // Fallback provider
+            model: 'grok-code',   // Fallback model
+            startTime: startTime,
+            ip: req.ip
+          });
           return;
         } else {
           const result = await response.json();
@@ -836,6 +940,33 @@ async function start() {
             totalTime: Date.now() - startTime,
             status: 'success'
           });
+
+          // Fallback Logging & Cost Calculation
+          try {
+            let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+            let finalCost = 0;
+            // Opencode Pricing (Approximate)
+            const inputCost = (usage.prompt_tokens / 1000000) * 0.50;
+            const outputCost = (usage.completion_tokens / 1000000) * 1.50;
+            finalCost = inputCost + outputCost;
+
+            db.prepare(`
+               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             `).run(
+              req.wrapperKeyId,
+              'opencode', // Provider is opencode (fallback)
+              'grok-code',
+              usage.prompt_tokens || 0,
+              usage.completion_tokens || 0,
+              Date.now() - startTime,
+              200,
+              finalCost
+            );
+          } catch (logErr) {
+            console.error('Fallback logging failed:', logErr);
+          }
+
           res.json(result);
         }
 

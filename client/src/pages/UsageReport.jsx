@@ -44,6 +44,7 @@ export default function UsageReport() {
                                     contentStyle={{ backgroundColor: '#121212', borderColor: '#333' }}
                                     formatter={(value) => [`$${Number(value).toFixed(6)}`, 'Total Cost']}
                                     cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                    itemStyle={{ color: '#00D1FF' }}
                                 />
                                 <Bar dataKey="total_cost" fill="#00D1FF" radius={[0, 4, 4, 0]} barSize={20} />
                             </BarChart>
@@ -75,6 +76,7 @@ export default function UsageReport() {
                                 <Tooltip
                                     contentStyle={{ backgroundColor: '#121212', borderColor: '#333' }}
                                     formatter={(value) => [`$${Number(value).toFixed(6)}`, 'Total Cost']}
+                                    itemStyle={{ color: '#00D1FF' }}
                                 />
                                 <Legend verticalAlign="middle" align="right" layout="vertical" />
                             </PieChart>

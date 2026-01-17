@@ -70,8 +70,9 @@ export default function RequestLogs() {
                             <th className="p-4 font-medium">Time</th>
                             <th className="p-4 font-medium">Client</th>
                             <th className="p-4 font-medium">Provider / Model</th>
-                            <th className="p-4 font-medium">Status</th>
-                            <th className="p-4 font-medium">Latency</th>
+                            <th className="p-4 font-medium font-heading tracking-wider">Status</th>
+                            <th className="p-4 font-medium font-heading tracking-wider text-right">Tokens</th>
+                            <th className="p-4 font-medium font-heading tracking-wider">Latency</th>
                             <th className="p-4 font-medium text-right">Cost</th>
                         </tr>
                     </thead>
@@ -105,6 +106,10 @@ export default function RequestLogs() {
                                             <XCircle size={12} /> {log.status_code}
                                         </span>
                                     )}
+                                </td>
+                                <td className="p-4 text-right font-mono text-textDim text-xs">
+                                    <div>{log.prompt_tokens + log.completion_tokens}</div>
+                                    <div className="opacity-50 text-[10px]">{log.prompt_tokens} / {log.completion_tokens}</div>
                                 </td>
                                 <td className="p-4 font-mono text-textDim">
                                     {log.latency_ms}ms
