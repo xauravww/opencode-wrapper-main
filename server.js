@@ -22,6 +22,7 @@ import jwt from 'jsonwebtoken';
 import { randomBytes, createHash } from 'crypto';
 import { trackStreamAndLog } from './utils/streamTracker.js';
 import { sendBackupEmail } from './utils/emailService.js';
+import { Communicate } from 'edge-tts-universal';
 
 dotenv.config();
 
@@ -1017,6 +1018,124 @@ async function start() {
         error: {
           message: error.message || 'Internal server error',
           type: error.name || 'internal_error'
+        }
+      });
+    }
+  });
+
+  /**
+   * @swagger
+   * /v1/audio/speech:
+   *   post:
+   *     summary: Generates audio from the input text.
+   *     tags: [Audio]
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - model
+   *               - input
+   *               - voice
+   *             properties:
+   *               model:
+   *                 type: string
+   *                 description: The model to use for generating audio.
+   *               input:
+   *                 type: string
+   *                 description: The text to generate audio for.
+   *               voice:
+   *                 type: string
+   *                 description: The voice to use for the audio.
+   *     responses:
+   *       200:
+   *         description: Audio file content.
+   *         content:
+   *           audio/mpeg:
+   *             schema:
+   *               type: string
+   *               format: binary
+   */
+  app.post('/v1/audio/speech', verifyWrapperKey, async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const { model, input, voice, speed } = req.body;
+
+      console.log(`🗣️ TTS request from ${req.ip}:`, {
+        model,
+        inputLength: input?.length,
+        voice,
+        userAgent: req.get('User-Agent'),
+        timestamp: new Date().toISOString()
+      });
+
+      if (!input) {
+        return res.status(400).json({ error: 'Input text is required' });
+      }
+
+      // Map OpenAI voices to Edge TTS voices
+      const voiceMap = {
+        'alloy': 'en-US-AvaMultilingualNeural',
+        'echo': 'en-US-AndrewMultilingualNeural',
+        'fable': 'en-GB-RyanNeural',
+        'onyx': 'en-US-BrianMultilingualNeural',
+        'nova': 'en-US-EmmaMultilingualNeural',
+        'shimmer': 'en-US-JennyNeural'
+      };
+
+      // Use mapped voice or fallback to the provided voice (if it's already an Edge voice) or default
+      const selectedVoice = voiceMap[voice] || voice || 'en-US-EmmaMultilingualNeural';
+
+      // Edge TTS options
+      const options = {
+        voice: selectedVoice,
+        rate: speed ? `${(speed - 1) * 100}%` : '+0%' // Convert 1.0 to 0%, 1.25 to +25%
+      };
+
+      const communicate = new Communicate(input, options);
+
+      // Set headers for audio response
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      for await (const chunk of communicate.stream()) {
+        if (chunk.type === 'audio' && chunk.data) {
+          res.write(chunk.data);
+        }
+      }
+
+      res.end();
+
+      console.log(`✅ TTS response sent to ${req.ip} using voice ${selectedVoice}`);
+
+      // Log request
+      try {
+        const inputCost = (input.length / 1000) * 0.015; // Approx cost calculation
+        db.prepare(`
+           INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         `).run(
+          req.wrapperKeyId,
+          'edge-tts',
+          model || 'tts-1',
+          input.length, // Using chars as "tokens" for rough logging
+          0,
+          Date.now() - startTime,
+          200,
+          inputCost
+        );
+      } catch (logErr) {
+        console.error('TTS logging failed:', logErr);
+      }
+
+    } catch (error) {
+      console.error(`❌ TTS error for ${req.ip}:`, error.message);
+      res.status(500).json({
+        error: {
+          message: error.message || 'Internal server error',
+          type: 'tts_error'
         }
       });
     }

@@ -143,8 +143,33 @@ Create a chat completion using OpenCode Zen models.
 ```
 
 ### GET /v1/models
+### GET /v1/models
 
 List available models.
+
+### POST /v1/audio/speech
+
+Generates audio from input text (Text-to-Speech).
+
+**Request Body:**
+```json
+{
+  "model": "tts-1",
+  "input": "The quick brown fox jumps over the lazy dog.",
+  "voice": "alloy"
+}
+```
+
+**Supported Voices:**
+- `alloy`
+- `echo`
+- `fable`
+- `onyx`
+- `nova`
+- `shimmer`
+
+**Response:**
+Returns an audio file (MP3) of the spoken text. Supports streaming.
 
 ## Image Processing
 
