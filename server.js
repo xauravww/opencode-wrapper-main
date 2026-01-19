@@ -31,23 +31,35 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(bodyParser.json());
-const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : ['*'];
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(o => o)
+  : ['*'];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like curl or mobile apps)
+    // 1. Allow requests with no origin (like curl, mobile apps, or same-origin)
     if (!origin || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
 
+    // 2. Exact match check
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    console.warn(`🔒 CORS blocked origin: ${origin}`);
-    return callback(new Error('Not allowed by CORS'), false);
+    // 3. Fallback: Check if origin (without trailing slash) matches
+    const normalizedOrigin = origin.replace(/\/$/, "");
+    if (allowedOrigins.some(o => o.replace(/\/$/, "") === normalizedOrigin)) {
+      return callback(null, true);
+    }
+
+    console.warn(`🔒 CORS Blocked: Origin "${origin}" is not in ALLOWED_ORIGINS. Update your .env to include this exact string.`);
+    return callback(null, false);
   },
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-access-token', 'x-force-provider'],
+  credentials: true,
+  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
 }));
 
 // MCP Servers Configuration
