@@ -48,3 +48,13 @@ CREATE TABLE IF NOT EXISTS provider_stats (
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
   response_times_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS model_pricing (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_cost_per_1m REAL NOT NULL,
+  output_cost_per_1m REAL NOT NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(provider, model)
+);

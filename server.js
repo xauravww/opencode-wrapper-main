@@ -1265,6 +1265,65 @@ async function start() {
     }
   });
 
+  // Admin Model Pricing Endpoints
+  app.get('/api/admin/pricing', verifyToken, (req, res) => {
+    try {
+      const pricing = db.prepare('SELECT * FROM model_pricing ORDER BY provider, model').all();
+      res.json(pricing);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/pricing', verifyToken, (req, res) => {
+    try {
+      const { provider, model, input_cost_per_1m, output_cost_per_1m } = req.body;
+
+      if (!provider || !model) {
+        return res.status(400).json({ error: 'Provider and Model are required' });
+      }
+
+      db.prepare(`
+        INSERT INTO model_pricing (provider, model, input_cost_per_1m, output_cost_per_1m)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(provider, model) DO UPDATE SET
+          input_cost_per_1m = excluded.input_cost_per_1m,
+          output_cost_per_1m = excluded.output_cost_per_1m,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(provider, model, input_cost_per_1m || 0, output_cost_per_1m || 0);
+
+      // Invalidate cache in providerManager
+      if (providerManager.pricingCache) {
+        providerManager.pricingCache.delete(`${provider}:${model}`);
+        // Also invalidate generic provider fallback if model is '*'
+        if (model === '*') {
+          providerManager.pricingCache.clear(); // Clear all for safety when fallback changes
+        }
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/admin/pricing/:id', verifyToken, (req, res) => {
+    try {
+      const { id } = req.params;
+      const pricingRow = db.prepare('SELECT provider, model FROM model_pricing WHERE id = ?').get(id);
+
+      db.prepare('DELETE FROM model_pricing WHERE id = ?').run(id);
+
+      if (pricingRow && providerManager.pricingCache) {
+        providerManager.pricingCache.delete(`${pricingRow.provider}:${pricingRow.model}`);
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Serve static files from React frontend
   app.use(express.static(path.join(__dirname, 'client/dist')));
 

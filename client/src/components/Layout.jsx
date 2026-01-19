@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
-import { LayoutDashboard, Key, LogOut, User, Server, Terminal, FileText, BadgeDollarSign } from 'lucide-react';
+import { LayoutDashboard, Key, LogOut, User, Server, Terminal, FileText, BadgeDollarSign, DollarSign } from 'lucide-react';
 
 export default function Layout() {
     const { logout, user } = useAuth();
@@ -45,6 +45,9 @@ export default function Layout() {
                     </NavLink>
                     <NavLink to="/usage" className={({ isActive }) => `flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${isActive ? 'bg-primary/10 text-primary' : 'text-textDim hover:text-text hover:bg-white/5'}`}>
                         <BadgeDollarSign size={18} /> Usage Reports
+                    </NavLink>
+                    <NavLink to="/pricing" className={({ isActive }) => `flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${isActive ? 'bg-primary/10 text-primary' : 'text-textDim hover:text-text hover:bg-white/5'}`}>
+                        <DollarSign size={18} /> Model Pricing
                     </NavLink>
                 </nav>
 

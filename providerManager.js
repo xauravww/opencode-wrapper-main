@@ -396,22 +396,46 @@ class ProviderManager {
 
       const data = await response.json();
 
-      // Pricing Logic (Refined)
-      const PRICING = {
-        'openai': { input: 2.50, output: 10.00 },
-        'anthropic': { input: 3.00, output: 15.00 },
-        'google': { input: 0.35, output: 1.05 },
-        'mistral': { input: 2.00, output: 6.00 },
-        'groq': { input: 0.59, output: 0.79 },
-        'cerebras': { input: 0.00, output: 0.00 },
-        'together': { input: 0.20, output: 0.20 },
-        'deepseek': { input: 0.14, output: 0.28 },
-        'default': { input: 0.50, output: 1.50 }
-      };
-
+      // Dynamic Pricing Logic
       if (data.usage) {
         usage = data.usage;
-        const pricing = PRICING[providerName] || PRICING['default'];
+
+        // 1. Try to find specific model pricing
+        // 2. Fallback to '*' catch-all for provider
+        // 3. Fallback to 'default' '*'
+
+        if (!this.pricingCache) this.pricingCache = new Map();
+        const cacheKey = `${providerName}:${data.model}`;
+
+        let pricing = this.pricingCache.get(cacheKey);
+
+        if (!pricing) {
+          try {
+            const db = (await import('./db/index.js')).default;
+            // Best match: exact model, Fallback 1: provider default, Fallback 2: global default
+            const row = db.prepare(`
+              SELECT input_cost_per_1m, output_cost_per_1m 
+              FROM model_pricing 
+              WHERE (provider = ? AND model = ?) 
+                 OR (provider = ? AND model = '*') 
+                 OR (provider = 'default' AND model = '*')
+              ORDER BY (provider = ? AND model = ?) DESC, (provider = ? AND model = '*') DESC
+              LIMIT 1
+            `).get(providerName, data.model, providerName, providerName, data.model, providerName);
+
+            if (row) {
+              pricing = { input: row.input_cost_per_1m, output: row.output_cost_per_1m };
+              this.pricingCache.set(cacheKey, pricing);
+            } else {
+              // Legacy hardcoded fallback as last resort
+              pricing = { input: 0.50, output: 1.50 };
+            }
+          } catch (e) {
+            console.error('Pricing lookup failed:', e.message);
+            pricing = { input: 0.50, output: 1.50 };
+          }
+        }
+
         const inputCost = (usage.prompt_tokens / 1000000) * pricing.input;
         const outputCost = (usage.completion_tokens / 1000000) * pricing.output;
         finalCost = inputCost + outputCost;

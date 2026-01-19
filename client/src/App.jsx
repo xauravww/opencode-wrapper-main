@@ -7,6 +7,7 @@ import ProviderKeys from './pages/ProviderKeys';
 import RequestLogs from './pages/RequestLogs';
 import Playground from './pages/Playground';
 import UsageReport from './pages/UsageReport';
+import Pricing from './pages/Pricing';
 import Layout from './components/Layout';
 import api from './api';
 
@@ -76,6 +77,7 @@ export default function App() {
                         <Route path="logs" element={<RequestLogs />} />
                         <Route path="playground" element={<Playground />} />
                         <Route path="usage" element={<UsageReport />} />
+                        <Route path="pricing" element={<Pricing />} />
                     </Route>
                 </Routes>
             </AuthProvider>
