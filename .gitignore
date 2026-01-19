@@ -222,3 +222,8 @@ opencode.db
 *.db
 *.sqlite
 *.sqlite3
+opencode.db
+opencode.db-wal
+opencode.db-shm
+db/opencode.db-shm
+db/opencode.db-wal
