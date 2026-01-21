@@ -19,10 +19,12 @@ import { initDB } from './db/index.js';
 import db from './db/index.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, randomUUID } from 'crypto';
+import crypto from 'crypto';
 import { trackStreamAndLog } from './utils/streamTracker.js';
 import { sendBackupEmail } from './utils/emailService.js';
 import { Communicate } from 'edge-tts-universal';
+import { Whisk } from "@rohitaryal/whisk-api";
 
 dotenv.config();
 
@@ -114,6 +116,8 @@ async function executeMCPTool(serverName, toolName, args) {
     await client.close();
   }
 }
+
+const imageCache = new Map();
 
 app.use(express.json({ limit: '50mb' }));
 
@@ -307,7 +311,22 @@ async function start() {
     providerManager.startHealthChecks();
   }
 
-  // --- AUTH ROUTES ---
+  // Cleanup Image Cache every 10 minutes
+  setInterval(() => {
+    if (imageCache.size > 0) {
+      const now = Date.now();
+      let deleted = 0;
+      for (const [key, value] of imageCache.entries()) {
+        if (now - value.timestamp > 3600000) { // 1 hour expiration
+          imageCache.delete(key);
+          deleted++;
+        }
+      }
+      if (deleted > 0) console.log(`🧹 Cleaned up ${deleted} expired images from cache`);
+    }
+  }, 600000);
+
+  // --- Auth Routes ---
   app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
     if (!(username && password)) {
@@ -582,6 +601,92 @@ async function start() {
   });
 
   // No client needed for local models - we'll make direct HTTP calls
+
+  // --- Image Generation Route ---
+  app.post('/v1/images/generations', verifyWrapperKey, async (req, res) => {
+    try {
+      const { prompt, n = 1, size = "1024x1024" } = req.body;
+
+      if (!prompt) {
+        return res.status(400).json({ error: { message: "Prompt is required" } });
+      }
+
+      console.log(`[Whisk] Generating image for prompt: ${prompt}`);
+
+      // Check if Whisk is configured
+      if (!process.env.COOKIE_WHISK) {
+        return res.status(500).json({ error: { message: "Image generation service not configured (missing COOKIE_WHISK)" } });
+      }
+
+      const whisk = new Whisk(process.env.COOKIE_WHISK);
+      const project = await whisk.newProject("OpenCode Wrapper Project");
+      const media = await project.generateImage(prompt);
+
+      if (media && media.encodedMedia) {
+        const imageId = randomUUID();
+        // Store for 1 hour
+        imageCache.set(imageId, { media, timestamp: Date.now() });
+
+        res.json({
+          created: Math.floor(Date.now() / 1000),
+          data: [
+            {
+              b64_json: media.encodedMedia,
+              id: imageId // Custom field to allow refinement
+            }
+          ]
+        });
+      } else {
+        throw new Error("Failed to generate image or no data returned");
+      }
+
+    } catch (error) {
+      console.error("Image generation error:", error);
+      res.status(500).json({ error: { message: error.message || "Internal Server Error" } });
+    }
+  });
+
+  // --- Image Edit/Refine Route ---
+  app.post('/v1/images/edits', verifyWrapperKey, async (req, res) => {
+    try {
+      const { image, prompt, n = 1, size = "1024x1024" } = req.body;
+
+      if (!image) return res.status(400).json({ error: { message: "Image ID is required" } });
+      if (!prompt) return res.status(400).json({ error: { message: "Prompt is required" } });
+
+      console.log(`[Whisk] Refining image ${image} with prompt: ${prompt}`);
+
+      const cached = imageCache.get(image);
+      if (!cached || !cached.media) {
+        console.log(`Cache lookup failed for ID: ${image}. Cache size: ${imageCache.size}`);
+        return res.status(404).json({ error: { message: "Image not found or expired. You can only refine images generated recently by this server." } });
+      }
+
+      const refinedMedia = await cached.media.refine(prompt);
+
+      if (refinedMedia && refinedMedia.encodedMedia) {
+        const newImageId = randomUUID();
+        imageCache.set(newImageId, { media: refinedMedia, timestamp: Date.now() });
+
+        res.json({
+          created: Math.floor(Date.now() / 1000),
+          data: [
+            {
+              b64_json: refinedMedia.encodedMedia,
+              id: newImageId
+            }
+          ]
+        });
+      } else {
+        throw new Error("Failed to refine image");
+      }
+
+    } catch (error) {
+      console.error("Image refine error:", error);
+      res.status(500).json({ error: { message: error.message || "Internal Server Error" } });
+    }
+  });
+
 
   /**
    * @swagger
@@ -1324,16 +1429,24 @@ async function start() {
     }
   });
 
-  // Serve static files from React frontend
-  app.use(express.static(path.join(__dirname, 'client/dist')));
+  // No static file serving - Pure API mode
+  app.get('/', (req, res) => {
+    res.json({
+      status: "active",
+      service: "Opencode Wrapper API",
+      version: "1.0.0",
+      endpoints: [
+        "/v1/chat/completions",
+        "/v1/images/generations",
+        "/v1/images/edits",
+        "/v1/models"
+      ]
+    });
+  });
 
-  // Handle React routing, return all requests to React app
-  app.get(/.*/, (req, res) => {
-    // Skip API routes to avoid index.html being returned for API 404s
-    if (req.path.startsWith('/v1/') || req.path.startsWith('/api/') || req.path.startsWith('/admin/')) {
-      return res.status(404).json({ error: 'Endpoint not found' });
-    }
-    res.sendFile(path.join(__dirname, 'client/dist', 'index.html'));
+  // 404 handler for undefined routes
+  app.use((req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
   });
 
   const port = process.env.PORT || 3010;
