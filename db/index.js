@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,11 +25,15 @@ export function initDB() {
     const adminUser = process.env.ADMIN_USER;
     const adminPass = process.env.ADMIN_PASS;
 
-    const adminExists = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(adminUser);
-    if (!adminExists) {
-        const hashedPassword = bcrypt.hashSync(adminPass, 10);
-        db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run(adminUser, hashedPassword);
-        console.log(`Admin user created (username: ${adminUser})`);
+    if (adminUser && adminPass) {
+        const adminExists = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(adminUser);
+        if (!adminExists) {
+            const hashedPassword = bcrypt.hashSync(adminPass, 10);
+            db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run(adminUser, hashedPassword);
+            console.log(`Admin user created (username: ${adminUser})`);
+        }
+    } else {
+        console.warn('Admin credentials not found in environment variables');
     }
 }
 

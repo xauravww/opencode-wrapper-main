@@ -1,4 +1,4 @@
-import fs from 'fs'; // Kept for other uses if any, but removed stats file usage
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -95,7 +95,6 @@ class ProviderManager {
 
     // Initialize in-memory structure
     Object.keys(this.providers).forEach(providerName => {
-      // Ensure local object structure exists
       if (!this.stats.providers[providerName]) {
         this.stats.providers[providerName] = {
           priority: this.getBasePriority(providerName),
@@ -109,7 +108,7 @@ class ProviderManager {
           response_times: []
         };
       }
-      this.providers[providerName] = { ...providerConfigs[providerName] }; // Deep copy
+      this.providers[providerName] = { ...providerConfigs[providerName] };
     });
 
     this.reloadKeys().catch(console.error);
@@ -154,7 +153,6 @@ class ProviderManager {
   async loadStats() {
     try {
       const db = (await import('./db/index.js')).default;
-
       const rows = db.prepare('SELECT * FROM provider_stats').all();
 
       rows.forEach(row => {
@@ -184,20 +182,11 @@ class ProviderManager {
   }
 
   async saveStats(force = false) {
-    // In DB mode, we write updates immediately on change (or batched).
-    // The previous implementation debounced file writes.
-    // For DB, concurrent writes are handled by WAL mode.
-    // However, frequent writes (every request) might be heavy if not needed.
-    // Let's implement a simple debounce for DB updates too, to batch updates per provider?
-    // Actually, `updateStats` calls `saveStats`.
-    // Let's keep the debounce logic but write to DB.
-
     if (this.saveStatsTimeout && !force) return;
 
     const performSave = async () => {
       try {
         const db = (await import('./db/index.js')).default;
-
         const updateStmt = db.prepare(`
           INSERT INTO provider_stats (
             provider_name, priority, speed_score, error_rate, total_requests, successful_requests,
@@ -215,10 +204,9 @@ class ProviderManager {
             response_times_json=excluded.response_times_json
         `);
 
-        // Transaction for better performance on bulk update
         const transaction = db.transaction((providers) => {
           for (const [name, stats] of Object.entries(providers)) {
-            if (!this.providers[name]) continue; // Only configured providers
+            if (!this.providers[name]) continue;
             updateStmt.run(
               name,
               stats.priority,
@@ -235,7 +223,6 @@ class ProviderManager {
         });
 
         transaction(this.stats.providers);
-        // console.log('✅ Provider stats saved to DB'); // Too noisy if every 5s
       } catch (error) {
         console.error('❌ Error saving provider stats to DB:', error.message);
       } finally {
@@ -307,18 +294,36 @@ class ProviderManager {
     return 'healthy';
   }
 
-  getOrderedProviders() {
-    const eligibleProviders = Object.keys(this.providers).filter(providerName => {
+  getOrderedProviders(options = {}) {
+    const { requiresVision = false } = options;
+
+    let providers = Object.keys(this.providers).filter(providerName => {
       const config = this.providers[providerName];
-      if (config.apiKeys.length === 0) return false;
-      return true;
+      return config.apiKeys.length > 0 && this.stats.providers[providerName].health_status !== 'unhealthy';
     });
 
-    return eligibleProviders.sort((a, b) => {
-      const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
-      if (priorityDiff !== 0) return priorityDiff;
-      return Math.random() - 0.5;
-    });
+    if (requiresVision) {
+      const visionPriority = ['nvidia', 'openai', 'anthropic', 'google', 'groq', 'together', 'openrouter'];
+      providers.sort((a, b) => {
+        const indexA = visionPriority.indexOf(a);
+        const indexB = visionPriority.indexOf(b);
+        
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        
+        const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
+        return priorityDiff !== 0 ? priorityDiff : Math.random() - 0.5;
+      });
+    } else {
+      providers.sort((a, b) => {
+        const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
+        if (priorityDiff !== 0) return priorityDiff;
+        return Math.random() - 0.5;
+      });
+    }
+
+    return providers;
   }
 
   selectProvider(requestedModel = null) {
@@ -336,10 +341,35 @@ class ProviderManager {
     return { ...config, apiKey, keyIndex };
   }
 
-  getBestModelForProvider(providerName) {
+  getBestModelForProvider(providerName, requiresVision = false) {
+    if (requiresVision) return this.getBestVisionModelForProvider(providerName);
     const config = this.providers[providerName];
     if (!config || config.models.length === 0) return 'gpt-3.5-turbo';
     return config.models[0];
+  }
+
+  getBestVisionModelForProvider(providerName) {
+    const visionModels = {
+      'nvidia': 'nvidia/llama-3.2-11b-vision-instruct',
+      'groq': 'llama-3.2-11b-vision-preview',
+      'openai': 'gpt-4o',
+      'anthropic': 'claude-3-5-sonnet-20240620',
+      'google': 'gemini-1.5-flash',
+      'openrouter': 'google/gemini-flash-1.5',
+      'mistral': 'pixtral-12b-2409',
+      'together': 'meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo',
+      'fireworks': 'accounts/fireworks/models/llama-v3p2-11b-vision-instruct'
+    };
+
+    if (visionModels[providerName]) return visionModels[providerName];
+
+    const config = this.providers[providerName];
+    if (config) {
+      const found = config.models.find(m => m.toLowerCase().includes('vision') || m.toLowerCase().includes('gpt-4o') || m.toLowerCase().includes('pixtral'));
+      if (found) return found;
+    }
+
+    return this.getBestModelForProvider(providerName);
   }
 
   async makeRequest(providerName, endpoint, options = {}) {
@@ -396,23 +426,15 @@ class ProviderManager {
 
       const data = await response.json();
 
-      // Dynamic Pricing Logic
       if (data.usage) {
         usage = data.usage;
-
-        // 1. Try to find specific model pricing
-        // 2. Fallback to '*' catch-all for provider
-        // 3. Fallback to 'default' '*'
-
         if (!this.pricingCache) this.pricingCache = new Map();
         const cacheKey = `${providerName}:${data.model}`;
-
         let pricing = this.pricingCache.get(cacheKey);
 
         if (!pricing) {
           try {
             const db = (await import('./db/index.js')).default;
-            // Best match: exact model, Fallback 1: provider default, Fallback 2: global default
             const row = db.prepare(`
               SELECT input_cost_per_1m, output_cost_per_1m 
               FROM model_pricing 
@@ -427,11 +449,9 @@ class ProviderManager {
               pricing = { input: row.input_cost_per_1m, output: row.output_cost_per_1m };
               this.pricingCache.set(cacheKey, pricing);
             } else {
-              // Legacy hardcoded fallback as last resort
               pricing = { input: 0.50, output: 1.50 };
             }
           } catch (e) {
-            console.error('Pricing lookup failed:', e.message);
             pricing = { input: 0.50, output: 1.50 };
           }
         }
@@ -445,14 +465,12 @@ class ProviderManager {
 
     } catch (error) {
       const isTimeout = error.name === 'AbortError';
-      console.error(`❌ ${providerName} request failed (Timeout: ${isTimeout}):`, error.message);
       if (isTimeout) error.message = `Request timeout after 15000ms`;
       throw error;
     } finally {
       const responseTime = Date.now() - startTime;
       this.updateStats(providerName, { success, responseTime, isAuthError });
 
-      // DB Logging
       if (!options.skipLog) {
         try {
           const db = (await import('./db/index.js')).default;
