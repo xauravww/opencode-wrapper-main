@@ -87,7 +87,7 @@ class ProviderManager {
       opencode: {
         baseUrl: process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1',
         apiKeys: [process.env.ZEN_API_KEY || 'your-zen-api-key-here'],
-        models: ['grok-code', 'code-supernova']
+        models: ['minimax-m2.1-free', 'grok-code']
       }
     };
 
@@ -307,11 +307,11 @@ class ProviderManager {
       providers.sort((a, b) => {
         const indexA = visionPriority.indexOf(a);
         const indexB = visionPriority.indexOf(b);
-        
+
         if (indexA !== -1 && indexB !== -1) return indexA - indexB;
         if (indexA !== -1) return -1;
         if (indexB !== -1) return 1;
-        
+
         const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
         return priorityDiff !== 0 ? priorityDiff : Math.random() - 0.5;
       });

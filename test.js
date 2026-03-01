@@ -15,33 +15,33 @@ describe('OpenCode Wrapper', () => {
     assert.ok(process.env.DEFAULT_MODEL, 'DEFAULT_MODEL should be set');
   });
 
-   test('should parse model string correctly', () => {
-     const model = 'anthropic/claude-3-5-sonnet-20241022';
-     const [provider, modelId] = model.split('/');
-     assert.equal(provider, 'anthropic');
-     assert.equal(modelId, 'claude-3-5-sonnet-20241022');
-   });
+  test('should parse model string correctly', () => {
+    const model = 'anthropic/claude-3-5-sonnet-20241022';
+    const [provider, modelId] = model.split('/');
+    assert.equal(provider, 'anthropic');
+    assert.equal(modelId, 'claude-3-5-sonnet-20241022');
+  });
 
-   test('should make API call to chat completions', async () => {
-     const response = await fetch('http://localhost:3010/v1/chat/completions', {
-       method: 'POST',
-       headers: {
-         'Content-Type': 'application/json',
-       },
-       body: JSON.stringify({
-         model: 'grok-code',
-         messages: [{ role: 'user', content: 'Hello, test message' }]
-       })
-     });
+  test('should make API call to chat completions', async () => {
+    const response = await fetch('http://localhost:3010/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'minimax-m2.1-free',
+        messages: [{ role: 'user', content: 'Hello, test message' }]
+      })
+    });
 
-     const result = await response.json();
-     console.log('Test API response:', JSON.stringify(result, null, 2));
+    const result = await response.json();
+    console.log('Test API response:', JSON.stringify(result, null, 2));
 
-     if (!response.ok) {
-       assert.fail(`API call failed: ${response.status} - ${JSON.stringify(result)}`);
-     }
+    if (!response.ok) {
+      assert.fail(`API call failed: ${response.status} - ${JSON.stringify(result)}`);
+    }
 
-     assert.ok(result.choices, 'Should have choices in response');
-     assert.ok(result.choices[0].message, 'Should have message in first choice');
-   });
- });
+    assert.ok(result.choices, 'Should have choices in response');
+    assert.ok(result.choices[0].message, 'Should have message in first choice');
+  });
+});

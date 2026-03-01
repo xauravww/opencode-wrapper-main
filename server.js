@@ -787,7 +787,7 @@ async function start() {
         object: 'list',
         data: [
           {
-            id: 'grok-code',
+            id: 'minimax-m2.1-free',
             object: 'model',
             created: Math.floor(Date.now() / 1000),
             owned_by: 'opencode'
@@ -858,7 +858,7 @@ async function start() {
       }
 
       // Use model from request or default (but we'll override with provider's best model)
-      const requestedModel = model || process.env.DEFAULT_MODEL || 'grok-code';
+      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax-m2.1-free';
 
       // Check if any message contains an image_url
       const hasImages = messages.some(msg =>
@@ -1058,9 +1058,9 @@ async function start() {
 
         const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
 
-        // Use grok-code for opencode fallback
+        // Use minimax-m2.1-free for opencode fallback
         const fallbackRequestBody = {
-          model: 'grok-code',
+          model: 'minimax-m2.1-free',
           messages: processedMessages,
           stream: stream || false,
           ...(tools && { tools })
@@ -1096,7 +1096,7 @@ async function start() {
           trackStreamAndLog(response, res, db, {
             wrapperKeyId: req.wrapperKeyId,
             provider: 'opencode', // Fallback provider
-            model: 'grok-code',   // Fallback model
+            model: 'minimax-m2.1-free',   // Fallback model
             startTime: startTime,
             ip: req.ip
           });
@@ -1127,7 +1127,7 @@ async function start() {
              `).run(
               req.wrapperKeyId,
               'opencode', // Provider is opencode (fallback)
-              'grok-code',
+              'minimax-m2.1-free',
               usage.prompt_tokens || 0,
               usage.completion_tokens || 0,
               Date.now() - startTime,
