@@ -22,6 +22,7 @@ import jwt from 'jsonwebtoken';
 import { randomBytes, createHash, randomUUID } from 'crypto';
 import crypto from 'crypto';
 import { trackStreamAndLog } from './utils/streamTracker.js';
+import { getPricing, calculateCost } from './utils/pricing.js';
 import { sendBackupEmail } from './utils/emailService.js';
 import { Communicate } from 'edge-tts-universal';
 import { Whisk } from "@rohitaryal/whisk-api";
@@ -442,6 +443,7 @@ async function start() {
       'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
       'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
       'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
+      'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
     };
 
     Object.entries(envMap).forEach(([provider, keysStr]) => {
@@ -728,10 +730,17 @@ async function start() {
       const allModels = [];
       const providerPromises = [];
 
+      // Helper to check if provider has valid API keys
+      const isProviderConfigured = (config) => {
+        return config.apiKeys && config.apiKeys.length > 0 &&
+          config.apiKeys.some(key => key && key.trim() !== '' && 
+            key !== 'your-api-key-here' && key !== 'your-zen-api-key-here');
+      };
+
       // Collect models from all configured providers
       Object.keys(providerManager.providers).forEach(providerName => {
         const config = providerManager.providers[providerName];
-        if (config.apiKeys.length > 0) {
+        if (isProviderConfigured(config)) {
           providerPromises.push(
             providerManager.makeRequest(providerName, '/models', { method: 'GET' })
               .then(result => {
@@ -843,14 +852,16 @@ async function start() {
     try {
       const { messages, model, stream, tools, temperature, max_tokens } = req.body;
 
-      console.log(`🔄 Chat completion request from ${req.ip}:`, {
-        model: model,
-        messageCount: messages?.length,
-        stream: stream || false,
-        toolsCount: tools?.length,
-        userAgent: req.get('User-Agent'),
-        timestamp: new Date().toISOString()
-      });
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`🔄 Chat completion request from ${req.ip}:`, {
+          model: model,
+          messageCount: messages?.length,
+          stream: stream || false,
+          toolsCount: tools?.length,
+          userAgent: req.get('User-Agent'),
+          timestamp: new Date().toISOString()
+        });
+      }
 
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         console.log(`❌ Invalid request: Empty messages array from ${req.ip}`);
@@ -964,7 +975,10 @@ async function start() {
             return; // Exit request handler, stream handles the rest
           }
 
-          console.log(`🔍 Provider Response (${selectedProvider}):`, JSON.stringify(result, null, 2));
+          // Only log in non-production
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`🔍 Provider Response (${selectedProvider}):`, JSON.stringify(result, null, 2));
+          }
 
           console.log(`✅ Chat completion response sent to ${req.ip} via ${selectedProvider}:`, {
             requestedModel,
@@ -980,32 +994,9 @@ async function start() {
           try {
             let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
 
-            // DEBUG: Write usage to file
-            try {
-              const fs = require('fs');
-              fs.writeFileSync('debug_usage.json', JSON.stringify({ provider: selectedProvider, usage }, null, 2));
-            } catch (e) { }
-
             let finalCost = 0;
 
-            // Pricing Defaults (USD per 1M tokens)
-            const PRICING = {
-              'openai': { input: 2.50, output: 10.00 },
-              'anthropic': { input: 3.00, output: 15.00 },
-              'google': { input: 0.35, output: 1.05 },
-              'mistral': { input: 2.00, output: 6.00 },
-              'groq': { input: 0.59, output: 0.79 },
-              'cerebras': { input: 0.00, output: 0.00 },
-              'together': { input: 0.20, output: 0.20 },
-              'deepseek': { input: 0.14, output: 0.28 },
-              'nvidia': { input: 0.65, output: 2.20 }, // Estimates
-              'default': { input: 0.50, output: 1.50 }
-            };
-
-            const pricing = PRICING[selectedProvider] || PRICING['default'];
-            const inputCost = (usage.prompt_tokens / 1000000) * pricing.input;
-            const outputCost = (usage.completion_tokens / 1000000) * pricing.output;
-            finalCost = inputCost + outputCost;
+            finalCost = calculateCost(usage, selectedProvider);
 
             db.prepare(`
                INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
@@ -1030,12 +1021,6 @@ async function start() {
 
         } catch (error) {
           console.warn(`⚠️ Provider ${selectedProvider} failed:`, error.message);
-
-          // DEBUG: Write error to file
-          try {
-            const fs = require('fs');
-            fs.writeFileSync('debug_error.json', JSON.stringify({ provider: selectedProvider, error: error.message, stack: error.stack }, null, 2));
-          } catch (e) { }
 
           lastError = error;
           // Continue to next provider in loop
@@ -1115,11 +1100,7 @@ async function start() {
           // Fallback Logging & Cost Calculation
           try {
             let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
-            let finalCost = 0;
-            // Opencode Pricing (Approximate)
-            const inputCost = (usage.prompt_tokens / 1000000) * 0.50;
-            const outputCost = (usage.completion_tokens / 1000000) * 1.50;
-            finalCost = inputCost + outputCost;
+            const finalCost = calculateCost(usage, 'opencode');
 
             db.prepare(`
                INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)

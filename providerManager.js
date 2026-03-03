@@ -88,6 +88,18 @@ class ProviderManager {
         baseUrl: process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1',
         apiKeys: [process.env.ZEN_API_KEY || 'your-zen-api-key-here'],
         models: ['minimax-m2.1-free', 'grok-code']
+      },
+      aitools: {
+        baseUrl: process.env.AITOOLS_BASE_URL || 'https://platform.aitools.cfd/api/v1',
+        apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS),
+        models: [
+          'qwen/qwen2.5-72b', 'qwen/qwen2.5-7b', 'qwen/qwen2.5-14b',
+          'qwen/qwen3-8b', 'qwen/qwen3-30b-a3b', 'qwen/qwen3-coder',
+          'deepseek/deepseek-r1-70b', 'deepseek/deepseek-r1-32b', 'deepseek/deepseek-v3-0324',
+          'google/gemini-2.0-flash-exp', 'google/gemma-3-27b',
+          'zhipu/glm-4-flash', 'zhipu/glm-4-9b', 'zhipu/glm-4v-flash',
+          'zhipu/glm-4.1v-thinking-flash', 'zhipu/glm-4.6v-flash', 'zhipu/glm-4.7-flash'
+        ]
       }
     };
 
@@ -145,7 +157,7 @@ class ProviderManager {
   }
 
   getBasePriority(providerName) {
-    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,opencode').split(',');
+    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,opencode,aitools').split(',');
     const index = priorityOrder.indexOf(providerName);
     return index >= 0 ? Math.max(10, 100 - (index * 5)) : 50;
   }
@@ -549,15 +561,19 @@ class ProviderManager {
     Object.keys(this.providers).forEach(providerName => {
       const config = this.providers[providerName];
       const stats = this.stats.providers[providerName];
+      const isConfigured = config.apiKeys && config.apiKeys.length > 0 && 
+        config.apiKeys.some(key => key && key.trim() !== '' && key !== 'your-api-key-here' && key !== 'your-zen-api-key-here');
+
+      if (!isConfigured) return;
 
       status[providerName] = {
-        configured: config.apiKeys.length > 0,
-        health_status: stats.health_status,
-        priority: stats.priority,
-        speed_score: stats.speed_score,
-        error_rate: stats.error_rate,
-        total_requests: stats.total_requests,
-        avg_response_time: stats.avg_response_time
+        configured: isConfigured,
+        health_status: stats?.health_status || 'unknown',
+        priority: stats?.priority || 0,
+        speed_score: stats?.speed_score || 0,
+        error_rate: stats?.error_rate || 0,
+        total_requests: stats?.total_requests || 0,
+        avg_response_time: stats?.avg_response_time || 0
       };
     });
     return status;
