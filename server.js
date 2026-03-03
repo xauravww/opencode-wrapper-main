@@ -796,7 +796,7 @@ async function start() {
         object: 'list',
         data: [
           {
-            id: 'minimax/minimax-m2.1',
+            id: 'grok-code',
             object: 'model',
             created: Math.floor(Date.now() / 1000),
             owned_by: 'opencode'
@@ -869,7 +869,7 @@ async function start() {
       }
 
       // Use model from request or default (but we'll override with provider's best model)
-      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax/minimax-m2.1';
+      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax-m2.5-free';
 
       // Check if any message contains an image_url
       const hasImages = messages.some(msg =>
@@ -1032,99 +1032,105 @@ async function start() {
         console.error(`❌ All top providers failed, trying fallback to opencode`);
       }
 
-      // Final fallback to opencode if all providers failed
-      try {
-        console.log(`🔄 Falling back to opencode for ${req.ip}`);
+      // Only fallback to opencode if NOT using forced provider
+      if (!forcedProvider) {
+        // Final fallback to opencode if all providers failed
+        try {
+          console.log(`🔄 Falling back to opencode for ${req.ip}`);
 
-        const zenApiKey = process.env.ZEN_API_KEY;
-        if (!zenApiKey || zenApiKey === 'your-zen-api-key-here') {
-          throw new Error('Zen API key not configured. Please set ZEN_API_KEY in your .env file.');
-        }
-
-        const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
-
-        // Use minimax/minimax-m2.1 for opencode fallback
-        const fallbackRequestBody = {
-          model: 'minimax/minimax-m2.1',
-          messages: processedMessages,
-          stream: stream || false,
-          ...(tools && { tools })
-        };
-
-        console.log(`📤 Sending to Zen fallback:`, { body: JSON.stringify(fallbackRequestBody, null, 2) });
-
-        const response = await fetch(`${zenBaseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${zenApiKey}`,
-          },
-          body: JSON.stringify(fallbackRequestBody)
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Zen API error: ${response.status} ${response.statusText} - ${errorText}`);
-        }
-
-        if (stream) {
-          // Handle streaming response
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-          console.log(`✅ Chat completion streaming fallback response started to ${req.ip} via opencode:`, {
-            model: requestedModel,
-            totalTime: Date.now() - startTime,
-            status: 'streaming'
-          });
-
-          trackStreamAndLog(response, res, db, {
-            wrapperKeyId: req.wrapperKeyId,
-            provider: 'opencode', // Fallback provider
-            model: 'minimax/minimax-m2.1',   // Fallback model
-            startTime: startTime,
-            ip: req.ip
-          });
-          return;
-        } else {
-          const result = await response.json();
-          console.log(`✅ Chat completion fallback response sent to ${req.ip} via opencode:`, {
-            model: requestedModel,
-            tokens: result.usage,
-            responseLength: result.choices?.[0]?.message?.content?.length,
-            toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
-            totalTime: Date.now() - startTime,
-            status: 'success'
-          });
-
-          // Fallback Logging & Cost Calculation
-          try {
-            let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
-            const finalCost = calculateCost(usage, 'opencode');
-
-            db.prepare(`
-               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             `).run(
-              req.wrapperKeyId,
-              'opencode', // Provider is opencode (fallback)
-              'minimax/minimax-m2.1',
-              usage.prompt_tokens || 0,
-              usage.completion_tokens || 0,
-              Date.now() - startTime,
-              200,
-              finalCost
-            );
-          } catch (logErr) {
-            console.error('Fallback logging failed:', logErr);
+          const zenApiKey = process.env.ZEN_API_KEY;
+          if (!zenApiKey || zenApiKey === 'your-zen-api-key-here') {
+            throw new Error('Zen API key not configured. Please set ZEN_API_KEY in your .env file.');
           }
 
-          res.json(result);
-        }
+          const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
 
-      } catch (fallbackError) {
-        console.error(`❌ Final fallback also failed for ${req.ip}:`, fallbackError.message);
-        throw fallbackError;
+          // Use minimax-m2.5-free for opencode fallback
+          const fallbackRequestBody = {
+            model: 'minimax-m2.5-free',
+            messages: processedMessages,
+            stream: stream || false,
+            ...(tools && { tools })
+          };
+
+          console.log(`📤 Sending to Zen fallback:`, { body: JSON.stringify(fallbackRequestBody, null, 2) });
+
+          const response = await fetch(`${zenBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${zenApiKey}`,
+            },
+            body: JSON.stringify(fallbackRequestBody)
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Zen API error: ${response.status} ${response.statusText} - ${errorText}`);
+          }
+
+          if (stream) {
+            // Handle streaming response
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            console.log(`✅ Chat completion streaming fallback response started to ${req.ip} via opencode:`, {
+              model: requestedModel,
+              totalTime: Date.now() - startTime,
+              status: 'streaming'
+            });
+
+            trackStreamAndLog(response, res, db, {
+              wrapperKeyId: req.wrapperKeyId,
+              provider: 'opencode', // Fallback provider
+              model: 'minimax-m2.5-free',   // Fallback model
+              startTime: startTime,
+              ip: req.ip
+            });
+            return;
+          } else {
+            const result = await response.json();
+            console.log(`✅ Chat completion fallback response sent to ${req.ip} via opencode:`, {
+              model: requestedModel,
+              tokens: result.usage,
+              responseLength: result.choices?.[0]?.message?.content?.length,
+              toolCalls: result.choices?.[0]?.message?.tool_calls?.length,
+              totalTime: Date.now() - startTime,
+              status: 'success'
+            });
+
+            // Fallback Logging & Cost Calculation
+            try {
+              let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+              const finalCost = calculateCost(usage, 'opencode');
+
+              db.prepare(`
+                 INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               `).run(
+                req.wrapperKeyId,
+                'opencode', // Provider is opencode (fallback)
+                'minimax-m2.5-free',
+                usage.prompt_tokens || 0,
+                usage.completion_tokens || 0,
+                Date.now() - startTime,
+                200,
+                finalCost
+              );
+            } catch (logErr) {
+              console.error('Fallback logging failed:', logErr);
+            }
+
+            res.json(result);
+          }
+
+        } catch (fallbackError) {
+          console.error(`❌ Final fallback also failed for ${req.ip}:`, fallbackError.message);
+          throw fallbackError;
+        }
+      } else {
+        // If forced provider failed and we're not falling back, throw the original error
+        throw lastError || new Error(`Forced provider '${forcedProvider}' failed`);
       }
 
     } catch (error) {

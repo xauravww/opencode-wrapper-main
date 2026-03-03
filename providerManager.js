@@ -87,18 +87,18 @@ class ProviderManager {
       opencode: {
         baseUrl: process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1',
         apiKeys: [process.env.ZEN_API_KEY || 'your-zen-api-key-here'],
-        models: ['minimax-m2.1-free', 'grok-code']
+        models: ['minimax-m2.5-free', 'trinity-large-preview-free', 'grok-code']
       },
       aitools: {
         baseUrl: process.env.AITOOLS_BASE_URL || 'https://platform.aitools.cfd/api/v1',
         apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS),
         models: [
-          'qwen/qwen2.5-72b', 'qwen/qwen2.5-7b', 'qwen/qwen2.5-14b',
-          'qwen/qwen3-8b', 'qwen/qwen3-30b-a3b', 'qwen/qwen3-coder',
+          'qwen/qwen3-8b', 'qwen/qwen3-30b-a3b', 'qwen/qwen3-coder', 'qwen/qwen3-14b',
           'deepseek/deepseek-r1-70b', 'deepseek/deepseek-r1-32b', 'deepseek/deepseek-v3-0324',
           'google/gemini-2.0-flash-exp', 'google/gemma-3-27b',
           'zhipu/glm-4-flash', 'zhipu/glm-4-9b', 'zhipu/glm-4v-flash',
-          'zhipu/glm-4.1v-thinking-flash', 'zhipu/glm-4.6v-flash', 'zhipu/glm-4.7-flash'
+          'zhipu/glm-4.1v-thinking-flash', 'zhipu/glm-4.6v-flash', 'zhipu/glm-4.7-flash',
+          'qwen/qwen2.5-72b', 'qwen/qwen2.5-7b', 'qwen/qwen2.5-vl-32b'
         ]
       }
     };
@@ -419,6 +419,10 @@ class ProviderManager {
         timeoutId = setTimeout(() => controller.abort(), 15000);
       }
 
+      console.log(`🔍 Sending request to ${providerName}:`, { url, method: options.method, headers });
+      if (options.body) {
+        console.log(`🔍 Request body:`, JSON.parse(options.body));
+      }
       const response = await fetch(url, { ...options, headers, signal });
 
       if (timeoutId) clearTimeout(timeoutId);
@@ -427,7 +431,8 @@ class ProviderManager {
         if (response.status === 401 || response.status === 402 || response.status === 403) {
           isAuthError = true;
         }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
       }
 
       success = true;

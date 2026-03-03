@@ -8,6 +8,9 @@ api.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+    } else {
+        // Default API key for playground (use one of the existing keys)
+        config.headers.Authorization = `Bearer sk-58ff73b`;
     }
     return config;
 });

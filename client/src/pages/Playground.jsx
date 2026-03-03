@@ -163,7 +163,7 @@ export default function Playground() {
             together: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
             deepseek: ['deepseek-chat', 'deepseek-coder'],
             nvidia: ['nvidia/llama-3.1-nemotron-70b-instruct'],
-            opencode: ['minimax-m2.1-free', 'grok-code']
+            opencode: ['minimax-m2.5-free', 'trinity-large-preview-free', 'grok-code']
         };
         return defaults[provider] || [];
     };
@@ -180,21 +180,23 @@ export default function Playground() {
 
         try {
             const res = await api.post('/v1/chat/completions', {
-                model: selectedModel || 'gpt-3.5-turbo',
+                model: selectedModel || 'minimax-m2.5-free',
                 messages: [...messages, userMsg],
                 stream: false
             }, {
                 headers: {
                     'x-force-provider': selectedProvider || undefined
-                },
-                baseURL: import.meta.env.VITE_API_URL || ''
+                }
             });
 
             const assistantMsg = { role: 'assistant', content: res.data.choices[0].message.content };
             setMessages(prev => [...prev, assistantMsg]);
         } catch (error) {
             console.error(error);
-            const errorMsg = { role: 'error', content: error.response?.data?.error || error.message };
+            const errorContent = error.response?.data?.error ? 
+                (typeof error.response.data.error === 'object' ? JSON.stringify(error.response.data.error) : error.response.data.error) : 
+                error.message;
+            const errorMsg = { role: 'error', content: errorContent };
             setMessages(prev => [...prev, errorMsg]);
         } finally {
             setLoading(false);
