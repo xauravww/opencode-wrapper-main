@@ -852,7 +852,8 @@ async function start() {
    */
 
 
-  app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
+  app.post('/api/v1/chat/completions', verifyWrapperKey, (req, res, next) => { req.url = '/v1/chat/completions'; next(); });
+app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
     const startTime = Date.now();
 
     try {
