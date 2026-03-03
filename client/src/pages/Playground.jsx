@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import api from '../api';
+import api, { v1Api } from '../api';
 import { Send, Plus, ChevronDown, Search, X, Trash2, Loader2, Bot, User, Settings2 } from 'lucide-react';
 
 function SearchableSelect({ value, onChange, options, placeholder, renderOption, emptyMessage, icon: Icon }) {
@@ -179,13 +179,13 @@ export default function Playground() {
         setLoading(true);
 
         try {
-            const res = await api.post('/v1/chat/completions', {
+            const res = await v1Api.post('/v1/chat/completions', {
                 model: selectedModel || 'minimax-m2.5-free',
                 messages: [...messages, userMsg],
                 stream: false
             }, {
                 headers: {
-                    'x-force-provider': selectedProvider || undefined
+                    'x-force-provider': (models.find(m => m.value === selectedModel)?.provider) || undefined
                 }
             });
 
