@@ -87,7 +87,7 @@ class ProviderManager {
       opencode: {
         baseUrl: process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1',
         apiKeys: [process.env.ZEN_API_KEY || 'your-zen-api-key-here'],
-        models: ['minimax-m2.1-free', 'grok-code']
+        models: ['minimax/minimax-m2.1', 'grok-code']
       }
     };
 

@@ -29,7 +29,7 @@ describe('OpenCode Wrapper', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'minimax-m2.1-free',
+        model: 'minimax/minimax-m2.1',
         messages: [{ role: 'user', content: 'Hello, test message' }]
       })
     });

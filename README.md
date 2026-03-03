@@ -46,7 +46,7 @@ ZEN_BASE_URL=https://opencode.ai/zen/v1
 ZEN_API_KEY=your-zen-api-key-here
 
 # Default Model Configuration (Free Zen models)
-DEFAULT_MODEL=minimax-m2.1-free
+DEFAULT_MODEL=minimax/minimax-m2.1
 
 # API Configuration
 PORT=3010
@@ -75,7 +75,7 @@ DEV_MODE=true npm start
 
 ### 🆓 Free Models Available
 
-- **Minimax** (`minimax-m2.1-free`) - High performance free model (Default)
+- **Minimax** (`minimax/minimax-m2.1`) - High performance free model (Default)
 - **Grok Code** (`grok-code`) - Free coding assistant with image analysis
 
 ## Usage
@@ -99,7 +99,7 @@ Create a chat completion using OpenCode Zen models.
   "messages": [
     {"role": "user", "content": "Hello!"}
   ],
-  "model": "minimax-m2.1-free"
+  "model": "minimax/minimax-m2.1"
 }
 ```
 
@@ -115,7 +115,7 @@ Create a chat completion using OpenCode Zen models.
       ]
     }
   ],
-  "model": "minimax-m2.1-free"
+  "model": "minimax/minimax-m2.1"
 }
 ```
 
@@ -125,7 +125,7 @@ Create a chat completion using OpenCode Zen models.
   "id": "chatcmpl-1234567890",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "minimax-m2.1-free",
+  "model": "minimax/minimax-m2.1",
   "choices": [{
     "index": 0,
     "message": {

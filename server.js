@@ -787,7 +787,7 @@ async function start() {
         object: 'list',
         data: [
           {
-            id: 'minimax-m2.1-free',
+            id: 'minimax/minimax-m2.1',
             object: 'model',
             created: Math.floor(Date.now() / 1000),
             owned_by: 'opencode'
@@ -858,7 +858,7 @@ async function start() {
       }
 
       // Use model from request or default (but we'll override with provider's best model)
-      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax-m2.1-free';
+      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax/minimax-m2.1';
 
       // Check if any message contains an image_url
       const hasImages = messages.some(msg =>
@@ -1058,9 +1058,9 @@ async function start() {
 
         const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
 
-        // Use minimax-m2.1-free for opencode fallback
+        // Use minimax/minimax-m2.1 for opencode fallback
         const fallbackRequestBody = {
-          model: 'minimax-m2.1-free',
+          model: 'minimax/minimax-m2.1',
           messages: processedMessages,
           stream: stream || false,
           ...(tools && { tools })
@@ -1096,7 +1096,7 @@ async function start() {
           trackStreamAndLog(response, res, db, {
             wrapperKeyId: req.wrapperKeyId,
             provider: 'opencode', // Fallback provider
-            model: 'minimax-m2.1-free',   // Fallback model
+            model: 'minimax/minimax-m2.1',   // Fallback model
             startTime: startTime,
             ip: req.ip
           });
@@ -1127,7 +1127,7 @@ async function start() {
              `).run(
               req.wrapperKeyId,
               'opencode', // Provider is opencode (fallback)
-              'minimax-m2.1-free',
+              'minimax/minimax-m2.1',
               usage.prompt_tokens || 0,
               usage.completion_tokens || 0,
               Date.now() - startTime,

@@ -4,7 +4,7 @@ const API_BASE = 'http://localhost:3010/v1/chat/completions';
 
 // Test models - focusing on key ones
 const testModels = [
-  'minimax-m2.1-free',   // Zen fallback
+  'minimax/minimax-m2.1',   // Zen fallback
   'llama3.1-70b',        // Cerebras
   'claude-3-haiku',      // OpenRouter/Anthropic
   'gpt-4o-mini',         // OpenRouter/OpenAI
