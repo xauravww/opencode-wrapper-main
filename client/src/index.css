@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+* {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+}
+
+::-webkit-scrollbar {
+    display: none !important;
+}
+
 :root {
     font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
     line-height: 1.5;
