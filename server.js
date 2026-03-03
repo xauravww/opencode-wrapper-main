@@ -394,6 +394,12 @@ async function start() {
     res.json(status);
   });
 
+  app.get('/admin/providers', (req, res) => {
+    // Return live status from memory + config from DB (without auth for client)
+    const status = providerManager.getProviderStatus();
+    res.json(status);
+  });
+
   // Manage Wrapper Keys (Client Keys)
   app.get('/api/keys', verifyToken, (req, res) => {
     const keys = db.prepare('SELECT id, name, prefix, is_active, created_at FROM wrapper_keys').all();
