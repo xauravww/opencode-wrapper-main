@@ -384,6 +384,19 @@ class ProviderManager {
     return this.getBestModelForProvider(providerName);
   }
 
+  getBestModel(requiresVision = false) {
+    const orderedProviders = this.getOrderedProviders({ requiresVision });
+    
+    if (orderedProviders.length === 0) {
+      return { provider: 'opencode', model: 'minimax-m2.5-free' };
+    }
+
+    const bestProvider = orderedProviders[0];
+    const model = this.getBestModelForProvider(bestProvider, requiresVision);
+    
+    return { provider: bestProvider, model };
+  }
+
   async makeRequest(providerName, endpoint, options = {}) {
     const config = this.getProviderConfig(providerName);
     if (!config) {

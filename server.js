@@ -27,7 +27,7 @@ import { sendBackupEmail } from './utils/emailService.js';
 import { Communicate } from 'edge-tts-universal';
 import { Whisk } from "@rohitaryal/whisk-api";
 
-dotenv.config();
+dotenv.config({ path: path.resolve('/root/opencode-wrapper-main', '.env') });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -875,13 +875,22 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
         return res.status(400).json({ error: 'Messages array is required and cannot be empty' });
       }
 
-      // Use model from request or default (but we'll override with provider's best model)
-      const requestedModel = model || process.env.DEFAULT_MODEL || 'minimax-m2.5-free';
-
       // Check if any message contains an image_url
       const hasImages = messages.some(msg =>
         Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url')
       );
+
+      // Smart model selection: if no model specified, pick best available
+      let requestedModel = model;
+      let smartProvider = null;
+      
+      if (!requestedModel || requestedModel.trim() === '') {
+        const best = providerManager.getBestModel(hasImages);
+        requestedModel = best.model;
+        smartProvider = best.provider;
+      } else {
+        requestedModel = model;
+      }
 
       // Process messages: flatten to string ONLY if no images are present
       // Vision models require the original array structure
@@ -899,11 +908,16 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
       });
 
       // Try providers with fallback logic
-      const orderedProviders = providerManager.getOrderedProviders({ requiresVision: hasImages });
+      let orderedProviders = providerManager.getOrderedProviders({ requiresVision: hasImages });
 
       // Check for forced provider (Admin testing)
       const forcedProvider = req.headers['x-force-provider'];
       let providersToTry = orderedProviders.slice(0, 3);
+
+      // If smart selection was used, prioritize that provider
+      if (smartProvider && !forcedProvider && orderedProviders.includes(smartProvider)) {
+        providersToTry = [smartProvider, ...providersToTry.filter(p => p !== smartProvider)].slice(0, 3);
+      }
 
       if (forcedProvider) {
         if (providerManager.providers[forcedProvider]) {
