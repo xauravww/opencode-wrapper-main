@@ -16,7 +16,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import ProviderManager from './providerManager.js';
 import cron from 'node-cron';
 import { initDB } from './db/index.js';
-import db from './db/index.js';
+import { User, ProviderKey, WrapperKey, RequestLog, ModelPricing, ProviderStats } from './db/mongo.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, createHash, randomUUID } from 'crypto';
@@ -201,7 +201,7 @@ const verifyToken = (req, res, next) => {
 };
 
 // Middleware to verify Wrapper API Keys
-const verifyWrapperKey = (req, res, next) => {
+const verifyWrapperKey = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
 
   // 1. Allow Admin JWT (for Playground/Testing)
@@ -209,8 +209,7 @@ const verifyWrapperKey = (req, res, next) => {
   if (token) {
     try {
       jwt.verify(token, JWT_SECRET);
-      // Valid Admin Token -> Allow access with a "system" key ID for logging
-      req.wrapperKeyId = null; // or 0? 0 might mean system.
+      req.wrapperKeyId = null;
       return next();
     } catch (e) {
       // Not a valid JWT, continue to check as API Key
@@ -218,9 +217,8 @@ const verifyWrapperKey = (req, res, next) => {
   }
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    // Log missing header failure
     try {
-      db.prepare('INSERT INTO request_logs (provider, model, status_code, cost_usd) VALUES (?, ?, ?, ?)').run('system', 'auth-missing', 401, 0);
+      await new RequestLog({ provider: 'system', model: 'auth-missing', status_code: 401, cost_usd: 0 }).save();
     } catch (e) { console.error('Failed to log auth error:', e); }
 
     return res.status(401).json({ error: 'Missing or invalid Authorization header' });
@@ -228,24 +226,20 @@ const verifyWrapperKey = (req, res, next) => {
 
   const apiKey = authHeader.split(' ')[1];
 
-  // Check DB for custom keys
   try {
-    // crypto is imported at top level
     const hash = createHash('sha256').update(apiKey).digest('hex');
+    const keyRecord = await WrapperKey.findOne({ api_key_hash: hash, is_active: true });
 
-    const keyRecord = db.prepare('SELECT id, is_active FROM wrapper_keys WHERE api_key_hash = ?').get(hash);
-
-    if (keyRecord && keyRecord.is_active) {
-      req.wrapperKeyId = keyRecord.id;
+    if (keyRecord) {
+      req.wrapperKeyId = keyRecord._id;
       return next();
     }
   } catch (err) {
     console.error("Key verification error:", err.message);
   }
 
-  // Log invalid key failure
   try {
-    db.prepare('INSERT INTO request_logs (provider, model, status_code, cost_usd) VALUES (?, ?, ?, ?)').run('system', 'auth-invalid', 401, 0);
+    await new RequestLog({ provider: 'system', model: 'auth-invalid', status_code: 401, cost_usd: 0 }).save();
   } catch (e) { console.error('Failed to log auth error:', e); }
 
   return res.status(401).json({ error: 'Invalid API Key' });
@@ -253,7 +247,7 @@ const verifyWrapperKey = (req, res, next) => {
 
 async function start() {
   // Initialize Database First
-  initDB();
+  await initDB();
 
   // Initialize Provider Manager
   const providerManager = new ProviderManager();
@@ -265,10 +259,9 @@ async function start() {
     try {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const cutoffDate = thirtyDaysAgo.toISOString();
 
       // Check for old logs first
-      const oldLogs = db.prepare('SELECT * FROM request_logs WHERE timestamp < ?').all(cutoffDate);
+      const oldLogs = await RequestLog.find({ timestamp: { $lt: thirtyDaysAgo } });
 
       if (oldLogs.length > 0) {
         console.log(`Found ${oldLogs.length} old logs to delete. Sending backup first...`);
@@ -277,16 +270,11 @@ async function start() {
             await sendBackupEmail(process.env.OWNER_MAIL, oldLogs);
             console.log('✅ Backup email sent successfully. Proceeding with deletion.');
           } else {
-            console.warn('⚠️ OWNER_MAIL not set. Skipping email backup, but proceeding with deletion (or safe to keep? Deciding to keep for safety if backup fails).');
-            // SAFETY: If you want to force backup, throw here. 
-            // But if user didn't config email, maybe we should just delete? 
-            // User requested backup "before deleting". So if no email, maybe don't delete?
-            // Let's assume we proceed if no email config, but if email fails we abort using try/catch.
             console.log('⚠️ No owner email configured, logs will be deleted without backup.');
           }
 
-          const result = db.prepare('DELETE FROM request_logs WHERE timestamp < ?').run(cutoffDate);
-          console.log(`✅ Deleted ${result.changes} old request logs`);
+          const result = await RequestLog.deleteMany({ timestamp: { $lt: thirtyDaysAgo } });
+          console.log(`✅ Deleted ${result.deletedCount} old request logs`);
 
         } catch (emailError) {
           console.error('❌ Backup email failed! Aborting deletion to save data.', emailError);
@@ -303,8 +291,8 @@ async function start() {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const result = db.prepare('DELETE FROM request_logs WHERE timestamp < ?').run(thirtyDaysAgo.toISOString());
-    if (result.changes > 0) console.log(`🧹 Cleanup on startup: Deleted ${result.changes} old logs`);
+    const result = await RequestLog.deleteMany({ timestamp: { $lt: thirtyDaysAgo } });
+    if (result.deletedCount > 0) console.log(`🧹 Cleanup on startup: Deleted ${result.deletedCount} old logs`);
   } catch (e) { console.error('Startup cleanup error:', e); }
 
   if (process.env.NODE_ENV !== 'test') {
@@ -328,154 +316,171 @@ async function start() {
   }, 600000);
 
   // --- Auth Routes ---
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!(username && password)) {
       res.status(400).send("All input is required");
       return;
     }
 
-    const user = db.prepare('SELECT * FROM admin_users WHERE username = ?').get(username);
+    try {
+      const user = await User.findOne({ username });
+      console.log(`Login attempt for: ${username}`);
+      
+      if (user) {
+        const passwordIsValid = bcrypt.compareSync(password, user.password_hash);
+        console.log(`User found. Password valid: ${passwordIsValid}`);
 
-    console.log(`Login attempt for: ${username}`);
-    if (user) {
-      const passwordIsValid = bcrypt.compareSync(password, user.password_hash);
-      console.log(`User found. Password valid: ${passwordIsValid}`);
-
-      if (passwordIsValid) {
-        // Create token
-        const token = jwt.sign(
-          { user_id: user.id, username },
-          JWT_SECRET,
-          { expiresIn: "24h" }
-        );
-        res.json({ token, username });
-        return;
+        if (passwordIsValid) {
+          // Create token
+          const token = jwt.sign(
+            { user_id: user._id, username },
+            JWT_SECRET,
+            { expiresIn: "24h" }
+          );
+          res.json({ token, username });
+          return;
+        }
+      } else {
+        console.log('User not found');
       }
-    } else {
-      console.log('User not found');
+    } catch (err) {
+      console.error('Login error:', err);
     }
     res.status(400).send("Invalid Credentials");
   });
 
   // --- ADMIN ROUTES ---
-  app.get('/api/admin/stats', verifyToken, (req, res) => {
-    // Get global stats from DB
-    const totalRequests = db.prepare('SELECT COUNT(*) as count FROM request_logs').get().count;
-    const totalCost = db.prepare('SELECT SUM(cost_usd) as cost FROM request_logs').get().cost || 0;
-    const avgLatency = db.prepare('SELECT AVG(latency_ms) as lat FROM request_logs').get().lat || 0;
+  app.get('/api/admin/stats', verifyToken, async (req, res) => {
+    try {
+      const totalRequests = await RequestLog.countDocuments();
+      const costs = await RequestLog.aggregate([{ $group: { _id: null, total: { $sum: "$cost_usd" } } }]);
+      const totalCost = costs[0]?.total || 0;
+      const latency = await RequestLog.aggregate([{ $group: { _id: null, avg: { $avg: "$latency_ms" } } }]);
+      const avgLatency = latency[0]?.avg || 0;
 
-    // Get cost over time (last 7 days)
-    const dailyCosts = db.prepare(`
-        SELECT date(timestamp) as date, SUM(cost_usd) as cost 
-        FROM request_logs 
-        WHERE timestamp >= date('now', '-7 days') 
-        GROUP BY date(timestamp)
-     `).all();
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Get active/configured providers
-    const providerStatus = providerManager.getProviderStatus();
-    const configuredProviders = Object.values(providerStatus).filter(p => p.configured).length;
-    const activeProviders = Object.values(providerStatus).filter(p => p.configured && p.health_status === 'healthy').length;
+      const dailyCosts = await RequestLog.aggregate([
+        { $match: { timestamp: { $gte: sevenDaysAgo } } },
+        { $group: { 
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+            cost: { $sum: "$cost_usd" }
+          }
+        },
+        { $project: { date: "$_id", cost: 1, _id: 0 } },
+        { $sort: { date: 1 } }
+      ]);
 
-    res.json({
-      totalRequests,
-      totalCost,
-      avgLatency,
-      dailyCosts,
-      configuredProviders,
-      activeProviders
-    });
+      const providerStatus = providerManager.getProviderStatus();
+      const configuredProviders = Object.values(providerStatus).filter(p => p.configured).length;
+      const activeProviders = Object.values(providerStatus).filter(p => p.configured && p.health_status === 'healthy').length;
+
+      res.json({
+        totalRequests,
+        totalCost,
+        avgLatency,
+        dailyCosts,
+        configuredProviders,
+        activeProviders
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/admin/providers', verifyToken, (req, res) => {
-    // Return live status from memory + config from DB
     const status = providerManager.getProviderStatus();
     res.json(status);
   });
 
   app.get('/admin/providers', (req, res) => {
-    // Return live status from memory + config from DB (without auth for client)
     const status = providerManager.getProviderStatus();
     res.json(status);
   });
 
-  // Manage Wrapper Keys (Client Keys)
-  app.get('/api/keys', verifyToken, (req, res) => {
-    const keys = db.prepare('SELECT id, name, prefix, is_active, created_at FROM wrapper_keys').all();
-    res.json(keys);
+  app.get('/api/keys', verifyToken, async (req, res) => {
+    try {
+      const keys = await WrapperKey.find({}, { name: 1, prefix: 1, is_active: 1, created_at: 1 });
+      res.json(keys);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/keys', verifyToken, (req, res) => {
-    const { name, prefix: customPrefix } = req.body; // Renamed 'prefix' to 'customPrefix' to avoid conflict
+  app.post('/api/keys', verifyToken, async (req, res) => {
+    const { name, prefix: customPrefix } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
 
-    // Generate keys
     const apiKey = (customPrefix || 'sk') + '-' + randomBytes(16).toString('hex');
     const apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
-    const displayPrefix = apiKey.substring(0, 10) + '...'; // Renamed 'prefix' to 'displayPrefix'
+    const displayPrefix = apiKey.substring(0, 10) + '...';
 
     try {
-      db.prepare('INSERT INTO wrapper_keys (name, api_key_hash, prefix) VALUES (?, ?, ?)').run(name, apiKeyHash, displayPrefix);
+      await new WrapperKey({ name, api_key_hash: apiKeyHash, prefix: displayPrefix }).save();
       res.json({ api_key: apiKey, name });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete('/api/keys/:id', verifyToken, (req, res) => {
-    db.prepare('DELETE FROM wrapper_keys WHERE id = ?').run(req.params.id);
-    res.json({ success: true });
+  app.delete('/api/keys/:id', verifyToken, async (req, res) => {
+    try {
+      await WrapperKey.findByIdAndDelete(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  // --- Provider Keys Management (Dynamic Backend Keys) ---
-  app.get('/api/admin/provider-keys', verifyToken, (req, res) => {
-    // 1. Get DB Keys
-    const dbKeys = db.prepare('SELECT id, provider_name, added_at as created_at, is_active FROM provider_keys').all();
+  app.get('/api/admin/provider-keys', verifyToken, async (req, res) => {
+    try {
+      const dbKeys = await ProviderKey.find({}, { provider_name: 1, is_active: 1, added_at: 1 });
+      
+      const envKeys = [];
+      const envMap = {
+        'opencode': process.env.ZEN_API_KEY,
+        'openai': process.env.API_KEY || process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY,
+        'groq': process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY,
+        'anthropic': process.env.ANTHROPIC_API_KEYS || process.env.ANTHROPIC_API_KEY,
+        'mistral': process.env.MISTRAL_API_KEYS || process.env.MISTRAL_API_KEY,
+        'cerebras': process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY,
+        'gemini': process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY,
+        'nvidia': process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY,
+        'deepseek': process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY,
+        'together': process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY,
+        'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
+        'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
+        'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
+        'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
+      };
 
-    // 2. Get Env Keys
-    const envKeys = [];
-    const envMap = {
-      'opencode': process.env.ZEN_API_KEY, // Zen Key
-      'openai': process.env.API_KEY || process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY,
-      'groq': process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY,
-      'anthropic': process.env.ANTHROPIC_API_KEYS || process.env.ANTHROPIC_API_KEY,
-      'mistral': process.env.MISTRAL_API_KEYS || process.env.MISTRAL_API_KEY,
-      'cerebras': process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY,
-      'gemini': process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY,
-      'nvidia': process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY,
-      'deepseek': process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY,
-      'together': process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY,
-      'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
-      'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
-      'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
-      'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
-    };
-
-    Object.entries(envMap).forEach(([provider, keysStr]) => {
-      if (keysStr && typeof keysStr === 'string') {
-        const keys = keysStr.split(',').map(k => k.trim()).filter(k => k);
-        keys.forEach((key, index) => {
-          envKeys.push({
-            id: `env-${provider}-${index}`,
-            provider_name: provider,
-            created_at: null,
-            is_active: 1,
-            source: 'env',
-            api_key: 'sk-...' + key.slice(-4)
+      Object.entries(envMap).forEach(([provider, keysStr]) => {
+        if (keysStr && typeof keysStr === 'string') {
+          keysStr.split(',').map(k => k.trim()).filter(k => k).forEach((key, index) => {
+            envKeys.push({
+              _id: `env-${provider}-${index}`,
+              provider_name: provider,
+              created_at: null,
+              is_active: 1,
+              source: 'env',
+              api_key: 'sk-...' + key.slice(-4)
+            });
           });
-        });
-      }
-    });
+        }
+      });
 
-    // Mark DB keys as source: 'db'
-    const formattedDbKeys = dbKeys.map(k => ({
-      ...k,
-      source: 'db',
-      api_key: '(hidden)' // We don't send actual DB keys to frontend for security
-    }));
+      const formattedDbKeys = dbKeys.map(k => ({
+        ...k.toObject(),
+        source: 'db',
+        api_key: '(hidden)'
+      }));
 
-    res.json([...envKeys, ...formattedDbKeys]);
+      res.json([...envKeys, ...formattedDbKeys]);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post('/api/admin/provider-keys', verifyToken, async (req, res) => {
@@ -483,8 +488,7 @@ async function start() {
     if (!provider_name || !api_key) return res.status(400).json({ error: 'Missing fields' });
 
     try {
-      db.prepare('INSERT INTO provider_keys (provider_name, api_key) VALUES (?, ?)').run(provider_name, api_key);
-      // Trigger reload
+      await new ProviderKey({ provider_name, api_key }).save();
       await providerManager.reloadKeys();
       res.json({ success: true });
     } catch (err) {
@@ -495,13 +499,10 @@ async function start() {
   app.patch('/api/admin/provider-keys/:id/status', verifyToken, async (req, res) => {
     const { id } = req.params;
     const { is_active } = req.body;
-
-    if (id.startsWith('env-')) {
-      return res.status(400).json({ error: 'Cannot toggle Environment keys via UI. Update .env file.' });
-    }
+    if (id.startsWith('env-')) return res.status(400).json({ error: 'Cannot toggle Env keys' });
 
     try {
-      db.prepare('UPDATE provider_keys SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, id);
+      await ProviderKey.findByIdAndUpdate(id, { is_active });
       await providerManager.reloadKeys();
       res.json({ success: true });
     } catch (err) {
@@ -511,87 +512,107 @@ async function start() {
 
   app.delete('/api/admin/provider-keys/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
-    if (id.toString().startsWith('env-')) {
-      return res.status(400).json({ error: 'Cannot delete Environment keys' });
+    if (id.startsWith('env-')) return res.status(400).json({ error: 'Cannot delete Env keys' });
+    try {
+      await ProviderKey.findByIdAndDelete(id);
+      await providerManager.reloadKeys();
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-    db.prepare('DELETE FROM provider_keys WHERE id = ?').run(id);
-    await providerManager.reloadKeys(); // Reload keys after deleting
-    res.json({ success: true });
   });
 
-  // --- Request Logs Explorer ---
-  app.get('/api/admin/logs', verifyToken, (req, res) => {
+  app.get('/api/admin/logs', verifyToken, async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    // Filters (optional) 
-    const statusFilter = req.query.status ? `AND status_code = ${req.query.status}` : '';
-    const providerFilter = req.query.provider ? `AND provider = '${req.query.provider}'` : '';
+    const query = {};
+    if (req.query.status) query.status_code = parseInt(req.query.status);
+    if (req.query.provider) query.provider = req.query.provider;
 
-    const count = db.prepare(`SELECT COUNT(*) as count FROM request_logs WHERE 1=1 ${statusFilter} ${providerFilter}`).get().count;
+    try {
+      const count = await RequestLog.countDocuments(query);
+      const logs = await RequestLog.find(query)
+        .populate('wrapper_key_id', 'name')
+        .sort({ timestamp: -1 })
+        .skip(skip)
+        .limit(limit);
 
-    const logs = db.prepare(`
-        SELECT 
-            r.id, 
-            r.provider, 
-            r.model, 
-            r.latency_ms, 
-            r.status_code, 
-            r.cost_usd, 
-            r.prompt_tokens,
-            r.completion_tokens,
-            r.timestamp,
-            w.name as client_name
-        FROM request_logs r
-        LEFT JOIN wrapper_keys w ON r.wrapper_key_id = w.id
-        WHERE 1=1 ${statusFilter} ${providerFilter}
-        ORDER BY r.timestamp DESC
-        LIMIT ? OFFSET ?
-    `).all(limit, offset);
-
-    res.json({
-      data: logs,
-      pagination: {
-        page,
-        limit,
-        total_pages: Math.ceil(count / limit),
-        total_items: count
-      }
-    });
+      res.json({
+        data: logs.map(l => ({ ...l.toObject(), client_name: l.wrapper_key_id?.name || 'system' })),
+        pagination: {
+          page,
+          limit,
+          total_pages: Math.ceil(count / limit),
+          total_items: count
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- Usage Aggregation Report ---
-  app.get('/api/admin/usage-report', verifyToken, (req, res) => {
-    // 1. Cost by Client
-    const costByClient = db.prepare(`
-        SELECT 
-            w.name as client_name, 
-            COUNT(*) as request_count, 
-            SUM(r.prompt_tokens) as prompt_tokens,
-            SUM(r.completion_tokens) as completion_tokens,
-            SUM(r.cost_usd) as total_cost
-        FROM request_logs r
-        LEFT JOIN wrapper_keys w ON r.wrapper_key_id = w.id
-        GROUP BY w.name
-        ORDER BY total_cost DESC
-    `).all();
+  app.get('/api/admin/usage-report', verifyToken, async (req, res) => {
+    try {
+      // 1. Cost by Client
+      const costByClient = await RequestLog.aggregate([
+        {
+          $group: {
+            _id: "$wrapper_key_id",
+            request_count: { $sum: 1 },
+            prompt_tokens: { $sum: "$prompt_tokens" },
+            completion_tokens: { $sum: "$completion_tokens" },
+            total_cost: { $sum: "$cost_usd" }
+          }
+        },
+        {
+          $lookup: {
+            from: "wrapperkeys",
+            localField: "_id",
+            foreignField: "_id",
+            as: "client"
+          }
+        },
+        {
+          $project: {
+            client_name: { $ifNull: [{ $arrayElemAt: ["$client.name", 0] }, "system"] },
+            request_count: 1,
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_cost: 1
+          }
+        },
+        { $sort: { total_cost: -1 } }
+      ]);
 
-    // 2. Cost by Provider
-    const costByProvider = db.prepare(`
-        SELECT 
-            provider, 
-            COUNT(*) as request_count, 
-            SUM(cost_usd) as total_cost
-        FROM request_logs
-        GROUP BY provider
-        ORDER BY total_cost DESC
-    `).all();
+      // 2. Cost by Provider
+      const costByProvider = await RequestLog.aggregate([
+        {
+          $group: {
+            _id: "$provider",
+            request_count: { $sum: 1 },
+            total_cost: { $sum: "$cost_usd" }
+          }
+        },
+        {
+          $project: {
+            provider: "$_id",
+            request_count: 1,
+            total_cost: 1,
+            _id: 0
+          }
+        },
+        { $sort: { total_cost: -1 } }
+      ]);
 
-    res.json({ costByClient, costByProvider });
+      res.json({ costByClient, costByProvider });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  // ... (Cron job code remains)
   // Setup cron job to ping URLs every minute
   cron.schedule('* * * * *', async () => {
     const pingUrls = process.env.PING_URLS;
@@ -607,8 +628,6 @@ async function start() {
       }
     }
   });
-
-  // No client needed for local models - we'll make direct HTTP calls
 
   // --- Image Generation Route ---
   app.post('/v1/images/generations', verifyWrapperKey, async (req, res) => {
@@ -728,11 +747,6 @@ async function start() {
    */
   app.get('/v1/models', async (req, res) => {
     try {
-      console.log(`🔄 Models request from ${req.ip}:`, {
-        userAgent: req.get('User-Agent'),
-        timestamp: new Date().toISOString()
-      });
-
       const allModels = [];
       const providerPromises = [];
 
@@ -750,11 +764,13 @@ async function start() {
           providerPromises.push(
             providerManager.makeRequest(providerName, '/models', { method: 'GET' })
               .then(result => {
-                if (result.data && Array.isArray(result.data)) {
+                const models = result.data || result.models;
+                if (models && Array.isArray(models)) {
                   // Add provider information to each model
-                  result.data.forEach(model => {
+                  models.forEach(model => {
                     allModels.push({
                       ...model,
+                      id: model.id || (model.name ? model.name.split('/').pop() : 'unknown'),
                       provider: providerName,
                       owned_by: `${providerName}-via-opencode`
                     });
@@ -786,35 +802,13 @@ async function start() {
         index === self.findIndex(m => m.id === model.id)
       );
 
-      const result = {
-        object: 'list',
-        data: uniqueModels
-      };
-
-      console.log(`✅ Models response sent to ${req.ip}: ${result.data.length} models from ${Object.keys(providerManager.providers).length} providers`);
-      res.json(result);
-
-    } catch (error) {
-      console.error(`❌ Models error for ${req.ip}:`, error.message);
-
-      // Return basic fallback models
       res.json({
         object: 'list',
-        data: [
-          {
-            id: 'grok-code',
-            object: 'model',
-            created: Math.floor(Date.now() / 1000),
-            owned_by: 'opencode'
-          },
-          {
-            id: 'code-supernova',
-            object: 'model',
-            created: Math.floor(Date.now() / 1000),
-            owned_by: 'opencode'
-          }
-        ]
+        data: uniqueModels
       });
+    } catch (error) {
+      console.error('❌ Error fetching models:', error);
+      res.status(500).json({ error: { message: 'Internal server error', type: 'internal_error' } });
     }
   });
 
@@ -1011,27 +1005,22 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             status: 'success'
           });
 
-          // Log Successful Request to DB
+          // Log Successful Request to MongoDB
           try {
-            let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+            const usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+            const finalCost = await calculateCost(usage, selectedProvider, actualModel);
 
-            let finalCost = 0;
+            await new RequestLog({
+              wrapper_key_id: req.wrapperKeyId,
+              provider: selectedProvider,
+              model: actualModel,
+              prompt_tokens: usage.prompt_tokens || 0,
+              completion_tokens: usage.completion_tokens || 0,
+              latency_ms: Date.now() - startTime,
+              status_code: 200,
+              cost_usd: finalCost
+            }).save();
 
-            finalCost = calculateCost(usage, selectedProvider);
-
-            db.prepare(`
-               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             `).run(
-              req.wrapperKeyId,
-              selectedProvider,
-              actualModel,
-              usage.prompt_tokens || 0,
-              usage.completion_tokens || 0,
-              Date.now() - startTime,
-              200,
-              finalCost
-            );
           } catch (logErr) {
             console.error('Logging failed:', logErr);
           }
@@ -1101,7 +1090,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
               status: 'streaming'
             });
 
-            trackStreamAndLog(response, res, db, {
+            trackStreamAndLog(response, res, {
               wrapperKeyId: req.wrapperKeyId,
               provider: 'opencode', // Fallback provider
               model: 'minimax-m2.5-free',   // Fallback model
@@ -1122,22 +1111,19 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
 
             // Fallback Logging & Cost Calculation
             try {
-              let usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
-              const finalCost = calculateCost(usage, 'opencode');
+              const usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
+              const finalCost = await calculateCost(usage, 'opencode', 'minimax-m2.5-free');
 
-              db.prepare(`
-                 INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               `).run(
-                req.wrapperKeyId,
-                'opencode', // Provider is opencode (fallback)
-                'minimax-m2.5-free',
-                usage.prompt_tokens || 0,
-                usage.completion_tokens || 0,
-                Date.now() - startTime,
-                200,
-                finalCost
-              );
+              await new RequestLog({
+                wrapper_key_id: req.wrapperKeyId,
+                provider: 'opencode',
+                model: 'minimax-m2.5-free',
+                prompt_tokens: usage.prompt_tokens || 0,
+                completion_tokens: usage.completion_tokens || 0,
+                latency_ms: Date.now() - startTime,
+                status_code: 200,
+                cost_usd: finalCost
+              }).save();
             } catch (logErr) {
               console.error('Fallback logging failed:', logErr);
             }
@@ -1386,16 +1372,17 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
   });
 
   // Admin Model Pricing Endpoints
-  app.get('/api/admin/pricing', verifyToken, (req, res) => {
+  app.get('/api/admin/pricing', verifyToken, async (req, res) => {
     try {
-      const pricing = db.prepare('SELECT * FROM model_pricing ORDER BY provider, model').all();
-      res.json(pricing);
+      const pricing = await ModelPricing.find().sort({ provider: 1, model: 1 }).lean();
+      // Map _id to id for frontend compatibility
+      res.json(pricing.map(p => ({ ...p, id: p._id })));
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post('/api/admin/pricing', verifyToken, (req, res) => {
+  app.post('/api/admin/pricing', verifyToken, async (req, res) => {
     try {
       const { provider, model, input_cost_per_1m, output_cost_per_1m } = req.body;
 
@@ -1403,21 +1390,16 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
         return res.status(400).json({ error: 'Provider and Model are required' });
       }
 
-      db.prepare(`
-        INSERT INTO model_pricing (provider, model, input_cost_per_1m, output_cost_per_1m)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(provider, model) DO UPDATE SET
-          input_cost_per_1m = excluded.input_cost_per_1m,
-          output_cost_per_1m = excluded.output_cost_per_1m,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(provider, model, input_cost_per_1m || 0, output_cost_per_1m || 0);
+      await ModelPricing.findOneAndUpdate(
+        { provider, model },
+        { input_cost_per_1m: input_cost_per_1m || 0, output_cost_per_1m: output_cost_per_1m || 0, updated_at: new Date() },
+        { upsert: true, new: true }
+      );
 
-      // Invalidate cache in providerManager
       if (providerManager.pricingCache) {
         providerManager.pricingCache.delete(`${provider}:${model}`);
-        // Also invalidate generic provider fallback if model is '*'
         if (model === '*') {
-          providerManager.pricingCache.clear(); // Clear all for safety when fallback changes
+          providerManager.pricingCache.clear();
         }
       }
 
@@ -1427,12 +1409,12 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
     }
   });
 
-  app.delete('/api/admin/pricing/:id', verifyToken, (req, res) => {
+  app.delete('/api/admin/pricing/:id', verifyToken, async (req, res) => {
     try {
       const { id } = req.params;
-      const pricingRow = db.prepare('SELECT provider, model FROM model_pricing WHERE id = ?').get(id);
+      const pricingRow = await ModelPricing.findById(id);
 
-      db.prepare('DELETE FROM model_pricing WHERE id = ?').run(id);
+      await ModelPricing.findByIdAndDelete(id);
 
       if (pricingRow && providerManager.pricingCache) {
         providerManager.pricingCache.delete(`${pricingRow.provider}:${pricingRow.model}`);

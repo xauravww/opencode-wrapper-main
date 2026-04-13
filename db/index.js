@@ -1,40 +1,24 @@
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/opencode_wrapper';
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'opencode.db');
-const db = new Database(dbPath);
+let isConnected = false;
 
-// Enable WAL mode for better concurrency
-db.pragma('journal_mode = WAL');
+export const initDB = async () => {
+    if (isConnected) return;
 
-export function initDB() {
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf8');
-    db.exec(schema);
-
-    // Create default admin if not exists
-    const adminUser = process.env.ADMIN_USER;
-    const adminPass = process.env.ADMIN_PASS;
-
-    if (adminUser && adminPass) {
-        const adminExists = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(adminUser);
-        if (!adminExists) {
-            const hashedPassword = bcrypt.hashSync(adminPass, 10);
-            db.prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)').run(adminUser, hashedPassword);
-            console.log(`Admin user created (username: ${adminUser})`);
-        }
-    } else {
-        console.warn('Admin credentials not found in environment variables');
+    try {
+        await mongoose.connect(MONGO_URI);
+        isConnected = true;
+        console.log('✅ Connected to MongoDB via Mongoose');
+    } catch (error) {
+        console.error('❌ MongoDB Connection Error:', error.message);
+        process.exit(1);
     }
 }
 
-export default db;
+export default mongoose.connection;

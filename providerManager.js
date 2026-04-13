@@ -1,154 +1,119 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { ProviderKey, ProviderStats, RequestLog } from './db/mongo.js';
+import { initDB } from './db/index.js';
+import mongoose from 'mongoose';
+import fetch from 'node-fetch';
 
 class ProviderManager {
   constructor() {
-    this.providers = {};
+    this.providers = {
+      'opencode': {
+        baseUrl: process.env.ZEN_API_URL || 'https://api.opencode.ai/v1',
+        apiKeys: this.parseApiKeys(process.env.ZEN_API_KEY),
+        models: ['grok-code', 'grok-vision'],
+        keyIndex: 0
+      },
+      'openai': {
+        baseUrl: 'https://api.openai.com/v1',
+        apiKeys: this.parseApiKeys(process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY),
+        models: ['gpt-4o', 'gpt-4o-mini', 'o1-preview'],
+        keyIndex: 0
+      },
+      'groq': {
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKeys: this.parseApiKeys(process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY),
+        models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+        keyIndex: 0
+      },
+      'anthropic': {
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKeys: this.parseApiKeys(process.env.ANTHROPIC_API_KEYS || process.env.ANTHROPIC_API_KEY),
+        models: ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229'],
+        keyIndex: 0
+      },
+      'gemini': {
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        apiKeys: this.parseApiKeys(process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY),
+        models: ['gemini-1.5-pro', 'gemini-1.5-flash'],
+        keyIndex: 0
+      },
+      'nvidia': {
+        baseUrl: 'https://integrate.api.nvidia.com/v1',
+        apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY),
+        models: ['meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct'],
+        keyIndex: 0
+      },
+      'cerebras': {
+        baseUrl: 'https://api.cerebras.ai/v1',
+        apiKeys: this.parseApiKeys(process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY),
+        models: ['llama3.1-70b', 'llama3.1-8b'],
+        keyIndex: 0
+      },
+      'together': {
+        baseUrl: 'https://api.together.xyz/v1',
+        apiKeys: this.parseApiKeys(process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY),
+        models: ['meta-llama/Llama-3-70b-chat-hf'],
+        keyIndex: 0
+      },
+      'fireworks': {
+        baseUrl: 'https://api.fireworks.ai/inference/v1',
+        apiKeys: this.parseApiKeys(process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY),
+        models: ['accounts/fireworks/models/llama-v3p1-70b-instruct'],
+        keyIndex: 0
+      },
+      'openrouter': {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKeys: this.parseApiKeys(process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY),
+        models: ['google/gemini-pro-1.5'],
+        keyIndex: 0
+      },
+      'deepseek': {
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKeys: this.parseApiKeys(process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY),
+        models: ['deepseek-chat', 'deepseek-coder'],
+        keyIndex: 0
+      },
+      'mistral': {
+        baseUrl: 'https://api.mistral.ai/v1',
+        apiKeys: this.parseApiKeys(process.env.MISTRAL_API_KEYS || process.env.MISTRAL_API_KEY),
+        models: ['mistral-large-latest', 'open-mixtral-8x22b'],
+        keyIndex: 0
+      },
+      'cohere': {
+        baseUrl: 'https://api.cohere.ai/v1',
+        apiKeys: this.parseApiKeys(process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY),
+        models: ['command-r-plus'],
+        keyIndex: 0
+      },
+      'aitools': {
+        baseUrl: 'https://api.aitools.com/v1',
+        apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY),
+        models: ['gpt-4-turbo'],
+        keyIndex: 0
+      }
+    };
+
     this.stats = {
-      providers: {},
-      last_updated: new Date().toISOString(),
-      version: 1
+      providers: {}
     };
 
-    // Config
-    this.speedWeightMultiplier = parseFloat(process.env.SPEED_WEIGHT_MULTIPLIER) || 0.6;
-    this.errorPenaltyMultiplier = parseFloat(process.env.ERROR_PENALTY_MULTIPLIER) || 3.0;
-    this.statsUpdateInterval = parseInt(process.env.STATS_UPDATE_INTERVAL) || 5000;
-    this.maxStatsHistory = parseInt(process.env.MAX_STATS_HISTORY) || 1000;
-    this.healthCheckInterval = parseInt(process.env.HEALTH_CHECK_INTERVAL) || 30000;
-
-    this.initializeProviders();
-    this.loadStats().catch(console.error);
-    this.startPeriodicUpdates();
-    this.startHealthChecks();
-  }
-
-  initializeProviders() {
-    const providerConfigs = {
-      groq: {
-        baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
-        apiKeys: this.parseApiKeys(process.env.GROQ_API_KEYS),
-        models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
-      },
-      nvidia: {
-        baseUrl: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-        apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS),
-        models: ['meta/llama3-70b-instruct', 'meta/llama3-8b-instruct', 'microsoft/wizardlm-2-8x22b', 'gpt-3.5-turbo', 'gpt-4']
-      },
-      gemini: {
-        baseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
-        apiKeys: this.parseApiKeys(process.env.GEMINI_API_KEYS),
-        models: ['gemini-pro', 'gemini-pro-vision']
-      },
-      openrouter: {
-        baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-        apiKeys: this.parseApiKeys(process.env.OPENROUTER_API_KEYS),
-        models: ['anthropic/claude-3-haiku', 'openai/gpt-4o-mini', 'meta-llama/llama-3.1-405b-instruct', 'gpt-3.5-turbo', 'gpt-4', 'gpt-4o']
-      },
-      together: {
-        baseUrl: process.env.TOGETHER_BASE_URL || 'https://api.together.xyz/v1',
-        apiKeys: this.parseApiKeys(process.env.TOGETHER_API_KEYS),
-        models: ['meta-llama/Llama-2-70b-chat-hf', 'mistralai/Mistral-7B-Instruct-v0.1']
-      },
-      fireworks: {
-        baseUrl: process.env.FIREWORKS_BASE_URL || 'https://api.fireworks.ai/inference/v1',
-        apiKeys: this.parseApiKeys(process.env.FIREWORKS_API_KEYS),
-        models: ['accounts/fireworks/models/llama-v3-70b-instruct', 'accounts/fireworks/models/mixtral-8x7b-instruct']
-      },
-      cerebras: {
-        baseUrl: process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
-        apiKeys: this.parseApiKeys(process.env.CEREBRAS_API_KEYS),
-        models: ['llama-3.3-70b', 'llama3.1-8b', 'gpt-3.5-turbo', 'gpt-4']
-      },
-      anthropic: {
-        baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1',
-        apiKeys: this.parseApiKeys(process.env.ANTHROPIC_API_KEYS),
-        models: ['claude-3-haiku-20240307', 'claude-3-sonnet-20240229']
-      },
-      deepseek: {
-        baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
-        apiKeys: this.parseApiKeys(process.env.DEEPSEEK_API_KEYS),
-        models: ['deepseek-chat', 'deepseek-coder']
-      },
-      mistral: {
-        baseUrl: process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
-        apiKeys: this.parseApiKeys(process.env.MISTRAL_API_KEYS),
-        models: ['mistral-large-latest', 'mistral-medium', 'mistral-small']
-      },
-      cohere: {
-        baseUrl: process.env.COHERE_BASE_URL || 'https://api.cohere.ai/v1',
-        apiKeys: this.parseApiKeys(process.env.COHERE_API_KEYS),
-        models: ['command', 'command-light', 'command-r']
-      },
-      opencode: {
-        baseUrl: process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1',
-        apiKeys: [process.env.ZEN_API_KEY || 'your-zen-api-key-here'],
-        models: ['minimax-m2.5-free', 'trinity-large-preview-free', 'grok-code']
-      },
-      aitools: {
-        baseUrl: process.env.AITOOLS_BASE_URL || 'https://platform.aitools.cfd/api/v1',
-        apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS),
-        models: [
-          'qwen/qwen3-8b', 'qwen/qwen3-30b-a3b', 'qwen/qwen3-coder', 'qwen/qwen3-14b',
-          'deepseek/deepseek-r1-70b', 'deepseek/deepseek-r1-32b', 'deepseek/deepseek-v3-0324',
-          'google/gemini-2.0-flash-exp', 'google/gemma-3-27b',
-          'zhipu/glm-4-flash', 'zhipu/glm-4-9b', 'zhipu/glm-4v-flash',
-          'zhipu/glm-4.1v-thinking-flash', 'zhipu/glm-4.6v-flash', 'zhipu/glm-4.7-flash',
-          'qwen/qwen2.5-72b', 'qwen/qwen2.5-7b', 'qwen/qwen2.5-vl-32b'
-        ]
-      }
-    };
-
-    this.providers = providerConfigs;
-
-    // Initialize in-memory structure
-    Object.keys(this.providers).forEach(providerName => {
-      if (!this.stats.providers[providerName]) {
-        this.stats.providers[providerName] = {
-          priority: this.getBasePriority(providerName),
-          speed_score: 50,
-          error_rate: 0,
-          total_requests: 0,
-          successful_requests: 0,
-          avg_response_time: 1000,
-          last_updated: new Date().toISOString(),
-          health_status: 'healthy',
-          response_times: []
-        };
-      }
-      this.providers[providerName] = { ...providerConfigs[providerName] };
+    // Initialize stats locally
+    Object.keys(this.providers).forEach(name => {
+      this.stats.providers[name] = {
+        priority: this.getBasePriority(name),
+        speed_score: 50,
+        error_rate: 0,
+        total_requests: 0,
+        successful_requests: 0,
+        avg_response_time: 1000,
+        health_status: 'healthy',
+        response_times: [],
+        last_updated: new Date()
+      };
     });
 
-    this.reloadKeys().catch(console.error);
-  }
-
-  async reloadKeys() {
-    try {
-      const db = (await import('./db/index.js')).default;
-      const rows = db.prepare('SELECT provider_name, api_key FROM provider_keys WHERE is_active = 1').all();
-
-      const dbKeys = {};
-      rows.forEach(row => {
-        if (!dbKeys[row.provider_name]) dbKeys[row.provider_name] = [];
-        dbKeys[row.provider_name].push(row.api_key);
-      });
-
-      Object.keys(this.providers).forEach(p => {
-        if (dbKeys[p]) {
-          const currentKeys = new Set(this.providers[p].apiKeys);
-          dbKeys[p].forEach(k => currentKeys.add(k));
-          this.providers[p].apiKeys = Array.from(currentKeys);
-        }
-      });
-
-      console.log('🔄 Provider keys reloaded from DB');
-    } catch (err) {
-      console.error('Failed to load dynamic keys:', err.message);
-    }
+    this.loadStats().then(() => {
+        this.reloadKeys().catch(console.error);
+    });
   }
 
   parseApiKeys(apiKeysStr) {
@@ -162,439 +127,311 @@ class ProviderManager {
     return index >= 0 ? Math.max(10, 100 - (index * 5)) : 50;
   }
 
-  async loadStats() {
+  async reloadKeys() {
     try {
-      const db = (await import('./db/index.js')).default;
-      const rows = db.prepare('SELECT * FROM provider_stats').all();
+      const dbKeys = await ProviderKey.find({ is_active: true });
+      
+      const providerKeysMap = {};
+      dbKeys.forEach(k => {
+        if (!providerKeysMap[k.provider_name]) providerKeysMap[k.provider_name] = [];
+        providerKeysMap[k.provider_name].push(k.api_key);
+      });
 
-      rows.forEach(row => {
-        const providerName = row.provider_name;
-        if (this.stats.providers[providerName]) {
-          const pStats = this.stats.providers[providerName];
-          pStats.priority = row.priority;
-          pStats.speed_score = row.speed_score;
-          pStats.error_rate = row.error_rate;
-          pStats.total_requests = row.total_requests;
-          pStats.successful_requests = row.successful_requests;
-          pStats.avg_response_time = row.avg_response_time;
-          pStats.health_status = row.health_status;
-          pStats.last_updated = row.last_updated;
-
-          try {
-            pStats.response_times = row.response_times_json ? JSON.parse(row.response_times_json) : [];
-          } catch (e) {
-            pStats.response_times = [];
-          }
+      Object.keys(this.providers).forEach(providerName => {
+        const envKeys = this.getEnvKeys(providerName);
+        const dbKeysForProvider = providerKeysMap[providerName] || [];
+        
+        const allKeys = [...new Set([...envKeys, ...dbKeysForProvider])];
+        this.providers[providerName].apiKeys = allKeys;
+        
+        if (allKeys.length > 0) {
+          console.log(`📡 Loaded ${allKeys.length} keys for ${providerName} (${dbKeysForProvider.length} from DB)`);
         }
       });
-      console.log('✅ Provider stats loaded from DB');
     } catch (error) {
-      console.error('❌ Error loading provider stats from DB:', error.message);
+       console.error('❌ Error reloading keys:', error);
     }
   }
 
-  async saveStats(force = false) {
-    if (this.saveStatsTimeout && !force) return;
-
-    const performSave = async () => {
-      try {
-        const db = (await import('./db/index.js')).default;
-        const updateStmt = db.prepare(`
-          INSERT INTO provider_stats (
-            provider_name, priority, speed_score, error_rate, total_requests, successful_requests,
-            avg_response_time, health_status, last_updated, response_times_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(provider_name) DO UPDATE SET
-            priority=excluded.priority,
-            speed_score=excluded.speed_score,
-            error_rate=excluded.error_rate,
-            total_requests=excluded.total_requests,
-            successful_requests=excluded.successful_requests,
-            avg_response_time=excluded.avg_response_time,
-            health_status=excluded.health_status,
-            last_updated=excluded.last_updated,
-            response_times_json=excluded.response_times_json
-        `);
-
-        const transaction = db.transaction((providers) => {
-          for (const [name, stats] of Object.entries(providers)) {
-            if (!this.providers[name]) continue;
-            updateStmt.run(
-              name,
-              stats.priority,
-              stats.speed_score,
-              stats.error_rate,
-              stats.total_requests,
-              stats.successful_requests,
-              stats.avg_response_time,
-              stats.health_status,
-              stats.last_updated,
-              JSON.stringify(stats.response_times)
-            );
-          }
-        });
-
-        transaction(this.stats.providers);
-      } catch (error) {
-        console.error('❌ Error saving provider stats to DB:', error.message);
-      } finally {
-        this.saveStatsTimeout = null;
-      }
+  getEnvKeys(providerName) {
+    const envMap = {
+      'opencode': process.env.ZEN_API_KEY,
+      'openai': process.env.API_KEY || process.env.OPENAI_API_KEYS || process.env.OPENAI_API_KEY,
+      'groq': process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY,
+      'anthropic': process.env.ANTHROPIC_API_KEYS || process.env.ANTHROPIC_API_KEY,
+      'mistral': process.env.MISTRAL_API_KEYS || process.env.MISTRAL_API_KEY,
+      'cerebras': process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY,
+      'gemini': process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY,
+      'nvidia': process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY,
+      'deepseek': process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY,
+      'together': process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY,
+      'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
+      'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
+      'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
+      'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
     };
+    const keyStr = envMap[providerName];
+    if (!keyStr) return [];
+    return keyStr.split(',').map(k => k.trim()).filter(k => k);
+  }
 
-    if (force) {
-      if (this.saveStatsTimeout) clearTimeout(this.saveStatsTimeout);
-      return performSave();
+  async loadStats() {
+    try {
+      const statsDocs = await ProviderStats.find();
+      statsDocs.forEach(s => {
+        if (this.stats.providers[s.provider_name]) {
+          const p = this.stats.providers[s.provider_name];
+          p.priority = s.priority;
+          p.speed_score = s.speed_score;
+          p.error_rate = s.error_rate;
+          p.total_requests = s.total_requests;
+          p.successful_requests = s.successful_requests;
+          p.avg_response_time = s.avg_response_time;
+          p.health_status = s.health_status;
+          p.response_times = s.response_times || [];
+        }
+      });
+      console.log('✅ Loaded provider stats from MongoDB');
+    } catch (err) {
+      console.error('❌ Failed to load stats:', err);
+    }
+  }
+
+  async saveStats() {
+    try {
+      const ops = Object.entries(this.stats.providers).map(([name, p]) => ({
+        updateOne: {
+          filter: { provider_name: name },
+          update: {
+            $set: {
+              priority: p.priority,
+              speed_score: p.speed_score,
+              error_rate: p.error_rate,
+              total_requests: p.total_requests,
+              successful_requests: p.successful_requests,
+              avg_response_time: p.avg_response_time,
+              health_status: p.health_status,
+              response_times: p.response_times || [],
+              last_updated: new Date()
+            }
+          },
+          upsert: true
+        }
+      }));
+      if (ops.length > 0) {
+        await ProviderStats.bulkWrite(ops);
+        console.log('💾 Periodic stats saved to MongoDB');
+      }
+    } catch (err) {
+      console.error('❌ Failed to save stats:', err);
+    }
+  }
+
+  async updateStats(providerName, latency, success) {
+    const p = this.stats.providers[providerName];
+    if (!p) return;
+
+    p.total_requests++;
+    if (success) {
+      p.successful_requests++;
+      p.response_times.push(latency);
+      if (p.response_times.length > 50) p.response_times.shift();
+      p.avg_response_time = p.response_times.reduce((a, b) => a + b, 0) / p.response_times.length;
     }
 
-    this.saveStatsTimeout = setTimeout(performSave, 2000);
-  }
+    p.error_rate = 1 - (p.successful_requests / p.total_requests);
+    const targetScore = success ? Math.max(0, 100 - (latency / 100)) : 0;
+    p.speed_score = (p.speed_score * 0.9) + (targetScore * 0.1);
 
-  updateStats(providerName, requestData) {
-    const providerStats = this.stats.providers[providerName];
-    if (!providerStats) return;
-
-    providerStats.total_requests++;
-
-    if (requestData.success) {
-      providerStats.successful_requests++;
-      providerStats.response_times.push(requestData.responseTime);
-
-      if (providerStats.response_times.length > this.maxStatsHistory) {
-        providerStats.response_times = providerStats.response_times.slice(-this.maxStatsHistory);
-      }
-
-      providerStats.avg_response_time = providerStats.response_times.reduce((a, b) => a + b, 0) / providerStats.response_times.length;
-      const normalizedTime = Math.min(1000, providerStats.avg_response_time) / 10;
-      providerStats.speed_score = Math.max(0, 100 - normalizedTime);
-      providerStats.sequential_errors = 0;
-
-    } else {
-      if (requestData.isAuthError) {
-        providerStats.error_rate = 1.0;
-        providerStats.health_status = 'unhealthy';
-      } else {
-        providerStats.error_rate = (providerStats.total_requests - providerStats.successful_requests) / providerStats.total_requests;
-      }
-      providerStats.sequential_errors = (providerStats.sequential_errors || 0) + 1;
+    try {
+      await ProviderStats.updateOne(
+        { provider_name: providerName },
+        { 
+          $set: { 
+            total_requests: p.total_requests,
+            successful_requests: p.successful_requests,
+            avg_response_time: p.avg_response_time,
+            error_rate: p.error_rate,
+            speed_score: p.speed_score,
+            response_times: p.response_times,
+            last_updated: new Date()
+          } 
+        },
+        { upsert: true }
+      );
+    } catch (e) {
+      console.error(`Failed to update stats for ${providerName}`, e);
     }
-
-    providerStats.priority = this.calculatePriority(providerName);
-    providerStats.health_status = this.determineHealthStatus(providerStats);
-    providerStats.last_updated = new Date().toISOString();
-    this.stats.last_updated = new Date().toISOString();
-    this.stats.version++;
-
-    this.saveStats();
-  }
-
-  calculatePriority(providerName) {
-    const stats = this.stats.providers[providerName];
-    const basePriority = this.getBasePriority(providerName);
-
-    const speedWeight = stats.speed_score * this.speedWeightMultiplier;
-    const errorPenalty = (stats.error_rate * 100) * this.errorPenaltyMultiplier;
-    const healthyBonus = stats.health_status === 'healthy' ? 20 : 0;
-
-    return Math.max(0, Math.min(200, basePriority + speedWeight - errorPenalty + healthyBonus));
-  }
-
-  determineHealthStatus(stats) {
-    if (stats.error_rate > 0.5 || (stats.sequential_errors || 0) > 3) return 'unhealthy';
-    if (stats.error_rate > 0.2) return 'degraded';
-    if (stats.total_requests > 10 && stats.successful_requests / stats.total_requests < 0.8) return 'degraded';
-    return 'healthy';
   }
 
   getOrderedProviders(options = {}) {
-    const { requiresVision = false } = options;
+    const availableProviders = Object.entries(this.stats.providers)
+      .filter(([name, p]) =>
+        this.providers[name] &&
+        this.providers[name].apiKeys &&
+        this.providers[name].apiKeys.length > 0 &&
+        p.health_status !== 'unhealthy'
+      )
+      .sort((a, b) => {
+        const scoreA = (a[1].priority * 0.4) + (a[1].speed_score * 0.6);
+        const scoreB = (b[1].priority * 0.4) + (b[1].speed_score * 0.6);
+        return scoreB - scoreA;
+      })
+      .map(([name]) => name);
 
-    let providers = Object.keys(this.providers).filter(providerName => {
-      const config = this.providers[providerName];
-      return config.apiKeys.length > 0 && this.stats.providers[providerName].health_status !== 'unhealthy';
-    });
-
-    if (requiresVision) {
-      const visionPriority = ['nvidia', 'openai', 'anthropic', 'google', 'groq', 'together', 'openrouter'];
-      providers.sort((a, b) => {
-        const indexA = visionPriority.indexOf(a);
-        const indexB = visionPriority.indexOf(b);
-
-        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-        if (indexA !== -1) return -1;
-        if (indexB !== -1) return 1;
-
-        const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
-        return priorityDiff !== 0 ? priorityDiff : Math.random() - 0.5;
-      });
-    } else {
-      providers.sort((a, b) => {
-        const priorityDiff = this.stats.providers[b].priority - this.stats.providers[a].priority;
-        if (priorityDiff !== 0) return priorityDiff;
-        return Math.random() - 0.5;
-      });
-    }
-
-    return providers;
-  }
-
-  selectProvider(requestedModel = null) {
-    const list = this.getOrderedProviders();
-    return list.length > 0 ? list[0] : 'opencode';
-  }
-
-  getProviderConfig(providerName) {
-    const config = this.providers[providerName];
-    if (!config || config.apiKeys.length === 0) return null;
-
-    const keyIndex = Math.floor(Date.now() / 60000) % config.apiKeys.length;
-    const apiKey = config.apiKeys[keyIndex];
-
-    return { ...config, apiKey, keyIndex };
+    return availableProviders.length > 0 ? availableProviders : ['opencode'];
   }
 
   getBestModelForProvider(providerName, requiresVision = false) {
-    if (requiresVision) return this.getBestVisionModelForProvider(providerName);
-    const config = this.providers[providerName];
-    if (!config || config.models.length === 0) return 'gpt-3.5-turbo';
-    return config.models[0];
-  }
-
-  getBestVisionModelForProvider(providerName) {
-    const visionModels = {
-      'nvidia': 'nvidia/llama-3.2-11b-vision-instruct',
-      'groq': 'llama-3.2-11b-vision-preview',
-      'openai': 'gpt-4o',
-      'anthropic': 'claude-3-5-sonnet-20240620',
-      'google': 'gemini-1.5-flash',
-      'openrouter': 'google/gemini-flash-1.5',
-      'mistral': 'pixtral-12b-2409',
-      'together': 'meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo',
-      'fireworks': 'accounts/fireworks/models/llama-v3p2-11b-vision-instruct'
-    };
-
-    if (visionModels[providerName]) return visionModels[providerName];
-
-    const config = this.providers[providerName];
-    if (config) {
-      const found = config.models.find(m => m.toLowerCase().includes('vision') || m.toLowerCase().includes('gpt-4o') || m.toLowerCase().includes('pixtral'));
-      if (found) return found;
+    const provider = this.providers[providerName];
+    if (!provider || !provider.models || provider.models.length === 0) {
+      return 'gpt-4o-mini';
     }
-
-    return this.getBestModelForProvider(providerName);
+    if (requiresVision) {
+      const visionModels = provider.models.filter(m =>
+        m.includes('vision') || m.includes('gpt-4o') || m.includes('gemini') || m.includes('claude-3')
+      );
+      if (visionModels.length > 0) return visionModels[0];
+    }
+    return provider.models[0];
   }
 
   getBestModel(requiresVision = false) {
-    const orderedProviders = this.getOrderedProviders({ requiresVision });
-    
-    if (orderedProviders.length === 0) {
-      return { provider: 'opencode', model: 'minimax-m2.5-free' };
+    const orderedProviders = this.getOrderedProviders();
+    for (const providerName of orderedProviders) {
+      const model = this.getBestModelForProvider(providerName, requiresVision);
+      if (model) return { provider: providerName, model };
+    }
+    return { provider: 'opencode', model: 'grok-code' };
+  }
+
+  getBestProvider(forceProvider = null) {
+    if (forceProvider && this.providers[forceProvider]) {
+      return forceProvider;
     }
 
-    const bestProvider = orderedProviders[0];
-    const model = this.getBestModelForProvider(bestProvider, requiresVision);
+    const availableProviders = Object.entries(this.stats.providers)
+      .filter(([name, p]) => 
+        this.providers[name].apiKeys && 
+        this.providers[name].apiKeys.length > 0 && 
+        p.health_status !== 'unhealthy'
+      )
+      .sort((a, b) => {
+        const scoreA = (a[1].priority * 0.4) + (a[1].speed_score * 0.6);
+        const scoreB = (b[1].priority * 0.4) + (b[1].speed_score * 0.6);
+        return scoreB - scoreA;
+      });
+
+    return availableProviders.length > 0 ? availableProviders[0][0] : 'opencode';
+  }
+
+  getNextKey(providerName) {
+    const p = this.providers[providerName];
+    if (!p || !p.apiKeys || p.apiKeys.length === 0) return null;
     
-    return { provider: bestProvider, model };
+    const key = p.apiKeys[p.keyIndex];
+    p.keyIndex = (p.keyIndex + 1) % p.apiKeys.length;
+    return key;
   }
 
   async makeRequest(providerName, endpoint, options = {}) {
-    const config = this.getProviderConfig(providerName);
-    if (!config) {
-      throw new Error(`No valid configuration for provider: ${providerName}`);
-    }
+    let currentProvider = providerName || this.getBestProvider();
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    const startTime = Date.now();
-    let success = false;
-    let isAuthError = false;
-
-    let usage = { prompt_tokens: 0, completion_tokens: 0 };
-    let finalCost = 0;
-
-    try {
-      const url = `${config.baseUrl}${endpoint}`;
-      const headers = { 'Content-Type': 'application/json', ...options.headers };
-
-      if (providerName === 'anthropic') {
-        headers['x-api-key'] = config.apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-      } else if (providerName === 'gemini') {
-        headers['x-goog-api-key'] = config.apiKey;
-      } else {
-        headers['Authorization'] = `Bearer ${config.apiKey}`;
+    while (attempts < maxAttempts) {
+      const p = this.providers[currentProvider];
+      if (!p) {
+        attempts++;
+        currentProvider = this.getBestProvider();
+        continue;
       }
 
-      let signal = options.signal;
-      let timeoutId = null;
-
-      if (!signal) {
-        const controller = new AbortController();
-        signal = controller.signal;
-        timeoutId = setTimeout(() => controller.abort(), 15000);
+      const apiKey = this.getNextKey(currentProvider);
+      if (!apiKey) {
+        attempts++;
+        currentProvider = this.getBestProvider();
+        continue;
       }
+      
+      const startTime = Date.now();
+      try {
+        const url = p.baseUrl + endpoint;
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          ...options.headers
+        };
 
-      console.log(`🔍 Sending request to ${providerName}:`, { url, method: options.method, headers });
-      if (options.body) {
-        console.log(`🔍 Request body:`, JSON.parse(options.body));
-      }
-      const response = await fetch(url, { ...options, headers, signal });
+        const response = await fetch(url, {
+          ...options,
+          headers
+        });
 
-      if (timeoutId) clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 402 || response.status === 403) {
-          isAuthError = true;
-        }
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
-      }
-
-      success = true;
-
-      if (options.stream) {
-        return response;
-      }
-
-      const data = await response.json();
-
-      if (data.usage) {
-        usage = data.usage;
-        if (!this.pricingCache) this.pricingCache = new Map();
-        const cacheKey = `${providerName}:${data.model}`;
-        let pricing = this.pricingCache.get(cacheKey);
-
-        if (!pricing) {
-          try {
-            const db = (await import('./db/index.js')).default;
-            const row = db.prepare(`
-              SELECT input_cost_per_1m, output_cost_per_1m 
-              FROM model_pricing 
-              WHERE (provider = ? AND model = ?) 
-                 OR (provider = ? AND model = '*') 
-                 OR (provider = 'default' AND model = '*')
-              ORDER BY (provider = ? AND model = ?) DESC, (provider = ? AND model = '*') DESC
-              LIMIT 1
-            `).get(providerName, data.model, providerName, providerName, data.model, providerName);
-
-            if (row) {
-              pricing = { input: row.input_cost_per_1m, output: row.output_cost_per_1m };
-              this.pricingCache.set(cacheKey, pricing);
-            } else {
-              pricing = { input: 0.50, output: 1.50 };
-            }
-          } catch (e) {
-            pricing = { input: 0.50, output: 1.50 };
+        const latency = Date.now() - startTime;
+        
+        if (response.ok) {
+          const data = await response.json();
+          await this.updateStats(currentProvider, latency, true);
+          return data;
+        } else {
+          const errorText = await response.text();
+          console.warn(`⚠️ Provider ${currentProvider} failed (${response.status}): ${errorText.substring(0, 100)}`);
+          await this.updateStats(currentProvider, latency, false);
+          
+          if (response.status === 401 || response.status === 429) {
+            attempts++;
+            currentProvider = this.getBestProvider();
+            continue;
           }
+          throw new Error(`Provider error: ${response.status}`);
         }
-
-        const inputCost = (usage.prompt_tokens / 1000000) * pricing.input;
-        const outputCost = (usage.completion_tokens / 1000000) * pricing.output;
-        finalCost = inputCost + outputCost;
-      }
-
-      return data;
-
-    } catch (error) {
-      const isTimeout = error.name === 'AbortError';
-      if (isTimeout) error.message = `Request timeout after 15000ms`;
-      throw error;
-    } finally {
-      const responseTime = Date.now() - startTime;
-      this.updateStats(providerName, { success, responseTime, isAuthError });
-
-      if (!options.skipLog) {
-        try {
-          const db = (await import('./db/index.js')).default;
-          const wrapperKeyId = options.wrapperKeyId || null;
-
-          db.prepare(`
-               INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             `).run(
-            wrapperKeyId,
-            providerName,
-            config.models[0],
-            usage.prompt_tokens || 0,
-            usage.completion_tokens || 0,
-            responseTime,
-            success ? 200 : 500,
-            finalCost
-          );
-        } catch (err) {
-          console.error('DB Log Error:', err.message);
-        }
+      } catch (error) {
+        console.error(`❌ Request error for ${currentProvider}:`, error.message);
+        await this.updateStats(currentProvider, Date.now() - startTime, false);
+        attempts++;
+        currentProvider = this.getBestProvider();
       }
     }
-  }
-
-  startPeriodicUpdates() {
-    setInterval(() => {
-      this.saveStats(true).catch(error => {
-        console.error('❌ Error in periodic stats save (DB):', error.message);
-      });
-    }, this.statsUpdateInterval);
-  }
-
-  startHealthChecks() {
-    this.performHealthChecks().catch(console.error);
-    setInterval(() => {
-      this.performHealthChecks().catch(error => {
-        console.error('❌ Error in health checks:', error.message);
-      });
-    }, this.healthCheckInterval);
-  }
-
-  async performHealthChecks() {
-    const providersToCheck = Object.keys(this.providers).filter(providerName => {
-      return this.providers[providerName].apiKeys.length > 0;
-    });
-
-    const BATCH_SIZE = 3;
-    for (let i = 0; i < providersToCheck.length; i += BATCH_SIZE) {
-      const batch = providersToCheck.slice(i, i + BATCH_SIZE);
-      await Promise.allSettled(batch.map(async (providerName) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
-
-          await this.makeRequest(providerName, '/models', {
-            method: 'GET',
-            signal: controller.signal,
-            skipLog: true
-          });
-
-          clearTimeout(timeout);
-          console.log(`✅ ${providerName} health check passed`);
-        } catch (error) {
-        }
-      }));
-    }
-  }
-
-  getStats() {
-    return { ...this.stats };
+    throw new Error("All providers failed");
   }
 
   getProviderStatus() {
     const status = {};
-    Object.keys(this.providers).forEach(providerName => {
-      const config = this.providers[providerName];
-      const stats = this.stats.providers[providerName];
-      const isConfigured = config.apiKeys && config.apiKeys.length > 0 && 
-        config.apiKeys.some(key => key && key.trim() !== '' && key !== 'your-api-key-here' && key !== 'your-zen-api-key-here');
-
-      if (!isConfigured) return;
-
-      status[providerName] = {
-        configured: isConfigured,
-        health_status: stats?.health_status || 'unknown',
-        priority: stats?.priority || 0,
-        speed_score: stats?.speed_score || 0,
-        error_rate: stats?.error_rate || 0,
-        total_requests: stats?.total_requests || 0,
-        avg_response_time: stats?.avg_response_time || 0
+    Object.entries(this.stats.providers).forEach(([name, p]) => {
+      status[name] = {
+        configured: this.providers[name].apiKeys && this.providers[name].apiKeys.length > 0,
+        keyCount: this.providers[name].apiKeys ? this.providers[name].apiKeys.length : 0,
+        priority: p.priority,
+        speed_score: p.speed_score,
+        error_rate: p.error_rate,
+        health_status: p.health_status,
+        avg_latency: p.avg_response_time
       };
     });
     return status;
+  }
+
+  startPeriodicUpdates() {
+    setInterval(() => this.saveStats(), 60000); // Save stats every minute
+  }
+
+  startHealthChecks() {
+    setInterval(() => this.checkAllHealth(), 300000); // Check every 5 mins
+  }
+
+  async checkAllHealth() {
+    for (const name of Object.keys(this.providers)) {
+      if (this.providers[name].apiKeys.length > 0) {
+        try {
+          // Normalizing for Gemini /models if needed (handeled in server.js but here we just check OK)
+          await this.makeRequest(name, '/models', { method: 'GET' });
+          this.stats.providers[name].health_status = 'healthy';
+        } catch (e) {
+          this.stats.providers[name].health_status = 'degraded';
+        }
+      }
+    }
   }
 }
 

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { DollarSign, Plus, Trash2, Save, X, Search, ChevronRight, AlertCircle, Edit3 } from 'lucide-react';
+import { DollarSign, Plus, Trash2, Save, X, Search, Edit3 } from 'lucide-react';
+import Select from '../components/Select';
+import ConfirmDialog from '../components/ConfirmDialog';
+import Toast from '../components/Toast';
 
 export default function Pricing() {
     const [pricing, setPricing] = useState([]);
@@ -10,7 +13,8 @@ export default function Pricing() {
     const [showModal, setShowModal] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
     const [formData, setFormData] = useState({ provider: '', model: '', input_cost_per_1m: 0, output_cost_per_1m: 0 });
-    const [message, setMessage] = useState({ type: '', text: '' });
+    const [toast, setToast] = useState({ message: '', type: 'success' });
+    const [confirmState, setConfirmState] = useState({ open: false, id: null });
 
     useEffect(() => {
         fetchPricing();
@@ -23,7 +27,7 @@ export default function Pricing() {
             setPricing(res.data);
         } catch (error) {
             console.error('Failed to fetch pricing:', error);
-            setMessage({ type: 'error', text: 'Failed to load pricing data.' });
+            setToast({ message: 'Failed to load pricing data.', type: 'error' });
         } finally {
             setLoading(false);
         }
@@ -32,9 +36,7 @@ export default function Pricing() {
     const fetchProviders = async () => {
         try {
             const res = await api.get('/admin/providers');
-            // Extract unique provider names that are configured
-            const list = Object.keys(res.data);
-            setProvidersList(['default', ...list]);
+            setProvidersList(['default', ...Object.keys(res.data)]);
         } catch (error) {
             console.error('Failed to fetch providers:', error);
         }
@@ -61,26 +63,28 @@ export default function Pricing() {
         e.preventDefault();
         try {
             await api.post('/admin/pricing', formData);
-            setMessage({
-                type: 'success',
-                text: isEditMode ? 'Pricing rate updated successfully.' : 'New pricing rate added.'
-            });
+            setToast({ message: isEditMode ? 'Rate updated.' : 'Rate added.', type: 'success' });
             setShowModal(false);
             fetchPricing();
         } catch (error) {
-            setMessage({ type: 'error', text: 'Failed to save pricing rate.' });
+            setToast({ message: 'Failed to save rate.', type: 'error' });
         }
     };
 
-    const handleDelete = async (e, id) => {
-        e.stopPropagation(); // Don't trigger edit modal
-        if (!window.confirm('Are you sure you want to delete this pricing rate?')) return;
+    const requestDelete = (e, id) => {
+        e.stopPropagation();
+        setConfirmState({ open: true, id });
+    };
+
+    const handleDelete = async () => {
+        const id = confirmState.id;
+        setConfirmState({ open: false, id: null });
         try {
             await api.delete(`/admin/pricing/${id}`);
-            setMessage({ type: 'success', text: 'Pricing rate deleted.' });
+            setToast({ message: 'Rate deleted.', type: 'success' });
             fetchPricing();
         } catch (error) {
-            setMessage({ type: 'error', text: 'Failed to delete pricing rate.' });
+            setToast({ message: 'Failed to delete rate.', type: 'error' });
         }
     };
 
@@ -91,115 +95,114 @@ export default function Pricing() {
 
     return (
         <div className="space-y-6">
+            {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Model Pricing</h2>
-                    <p className="text-textDim mt-1">Manage costs per 1M tokens. Click a card to edit existing rates.</p>
+                    <h2 className="page-title">Model Pricing</h2>
+                    <p className="page-subtitle">Manage cost rates per 1M tokens. Click a card to edit.</p>
                 </div>
-                <button
-                    onClick={openAddModal}
-                    className="flex items-center justify-center gap-2 bg-primary text-background px-4 py-2 rounded-lg font-bold hover:brightness-110 transition-all shadow-lg shadow-primary/20"
-                >
-                    <Plus size={20} /> Add New Rate
+                <button onClick={openAddModal} className="btn-primary flex items-center gap-2 shrink-0">
+                    <Plus size={16} />
+                    Add Rate
                 </button>
             </div>
 
-            {message.text && (
-                <div className={`p-4 rounded-lg flex items-center gap-3 animate-in fade-in slide-in-from-top-2 z-10 relative ${message.type === 'success' ? 'bg-success/10 text-success border border-success/20' : 'bg-error/10 text-error border border-error/20'
-                    }`}>
-                    <AlertCircle size={20} />
-                    <span className="font-medium">{message.text}</span>
-                    <button onClick={() => setMessage({ type: '', text: '' })} className="ml-auto opacity-50 hover:opacity-100">
-                        <X size={16} />
-                    </button>
-                </div>
-            )}
+            <ConfirmDialog
+                open={confirmState.open}
+                title="Delete pricing rate"
+                message="This rate will be removed permanently."
+                confirmLabel="Delete"
+                onConfirm={handleDelete}
+                onCancel={() => setConfirmState({ open: false, id: null })}
+            />
+            <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
 
-            <div className="flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/10 group focus-within:border-primary/50 transition-colors">
-                <Search className="text-textDim group-focus-within:text-primary transition-colors" size={20} />
+            {/* Search */}
+            <div className="flex items-center gap-2.5 panel px-4 py-2.5 focus-within:border-borderLight transition-colors">
+                <Search className="text-textMuted shrink-0" size={16} />
                 <input
                     type="text"
                     placeholder="Search by provider or model..."
-                    className="bg-transparent border-none outline-none w-full text-lg"
+                    className="bg-transparent border-none outline-none w-full text-sm placeholder-textMuted"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
+                {searchTerm && (
+                    <button onClick={() => setSearchTerm('')} className="text-textMuted hover:text-text">
+                        <X size={14} />
+                    </button>
+                )}
             </div>
 
+            {/* Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
-                    <div className="glass-panel w-full max-w-md p-8 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between mb-8">
-                            <h3 className="text-2xl font-bold flex items-center gap-3">
-                                {isEditMode ? <Edit3 className="text-primary" /> : <DollarSign className="text-primary" />}
-                                {isEditMode ? 'Edit Model Rate' : 'Add Model Rate'}
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
+                    <div className="panel-elevated w-full max-w-md p-6 animate-slide-up" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-lg font-bold flex items-center gap-2">
+                                {isEditMode ? <Edit3 size={18} className="text-primary" /> : <DollarSign size={18} className="text-primary" />}
+                                {isEditMode ? 'Edit Rate' : 'Add Rate'}
                             </h3>
-                            <button onClick={() => setShowModal(false)} className="text-textDim hover:text-white transition-colors">
-                                <X size={24} />
+                            <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg text-textMuted hover:text-text hover:bg-surfaceHover transition-colors">
+                                <X size={18} />
                             </button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="space-y-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-textDim uppercase tracking-widest">Provider</label>
-                                <div className="relative">
-                                    <select
-                                        className={`input-field w-full appearance-none bg-[#1a1a1a] ${isEditMode ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Provider</label>
+                                <div className={isEditMode ? 'opacity-50 pointer-events-none' : ''}>
+                                    <Select
                                         value={formData.provider}
-                                        onChange={e => setFormData({ ...formData, provider: e.target.value })}
-                                        disabled={isEditMode}
-                                        required
-                                    >
-                                        {providersList.map(p => (
-                                            <option key={p} value={p}>{p}</option>
-                                        ))}
-                                    </select>
-                                    {!isEditMode && <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 rotate-90 text-textDim pointer-events-none" size={16} />}
+                                        onChange={val => setFormData({ ...formData, provider: val })}
+                                        options={providersList.map(p => ({ value: p, label: p }))}
+                                        placeholder="Select provider"
+                                    />
                                 </div>
                             </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-textDim uppercase tracking-widest">Model</label>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Model</label>
                                 <input
                                     type="text"
                                     className={`input-field w-full ${isEditMode ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    placeholder="gpt-4, *, etc."
+                                    placeholder="gpt-4o, *, etc."
                                     value={formData.model}
                                     onChange={e => setFormData({ ...formData, model: e.target.value })}
                                     disabled={isEditMode}
                                     required
                                 />
-                                {!isEditMode && <p className="text-[10px] text-textDim italic mt-1">Use * for provider-wide fallback.</p>}
+                                {!isEditMode && <p className="text-[10px] text-textMuted mt-1">Use * for provider-wide fallback.</p>}
                             </div>
-                            <div className="grid grid-cols-2 gap-6">
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-textDim uppercase tracking-widest">Input ($/1M)</label>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Input $/1M</label>
                                     <input
                                         type="number"
                                         step="0.000001"
-                                        className="input-field w-full font-mono text-primary"
+                                        className="input-field w-full font-mono"
                                         value={formData.input_cost_per_1m}
                                         onChange={e => setFormData({ ...formData, input_cost_per_1m: parseFloat(e.target.value) || 0 })}
                                         required
                                     />
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-textDim uppercase tracking-widest">Output ($/1M)</label>
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Output $/1M</label>
                                     <input
                                         type="number"
                                         step="0.000001"
-                                        className="input-field w-full font-mono text-white"
+                                        className="input-field w-full font-mono"
                                         value={formData.output_cost_per_1m}
                                         onChange={e => setFormData({ ...formData, output_cost_per_1m: parseFloat(e.target.value) || 0 })}
                                         required
                                     />
                                 </div>
                             </div>
-                            <div className="pt-6 flex gap-4">
-                                <button type="submit" className="flex-1 bg-primary text-background font-bold py-4 rounded-xl hover:brightness-110 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
-                                    <Save size={20} />
-                                    {isEditMode ? 'Update Rate' : 'Save Rate'}
+                            <div className="flex gap-3 pt-2">
+                                <button type="submit" className="btn-primary flex-1 flex items-center justify-center gap-2 py-3">
+                                    <Save size={15} />
+                                    {isEditMode ? 'Update' : 'Save'}
                                 </button>
-                                <button type="button" onClick={() => setShowModal(false)} className="flex-1 bg-white/5 font-bold py-4 rounded-xl hover:bg-white/10 transition-all">
+                                <button type="button" onClick={() => setShowModal(false)} className="btn-ghost flex-1 border border-border py-3">
                                     Cancel
                                 </button>
                             </div>
@@ -208,64 +211,61 @@ export default function Pricing() {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {loading ? (
-                    Array(6).fill(0).map((_, i) => (
-                        <div key={i} className="glass-panel h-52 animate-pulse bg-white/5 rounded-2xl" />
+                    [...Array(6)].map((_, i) => (
+                        <div key={i} className="panel h-[180px] animate-pulse" />
                     ))
                 ) : filteredPricing.length === 0 ? (
-                    <div className="col-span-full py-24 text-center glass-panel rounded-2xl">
-                        <DollarSign size={64} className="mx-auto text-textDim opacity-10 mb-6" />
-                        <p className="text-2xl font-bold text-textDim">No pricing rates found.</p>
-                        <p className="text-textDim mt-2">Try adjusting your search or add a new rate.</p>
+                    <div className="col-span-full panel py-16 text-center">
+                        <DollarSign size={40} className="mx-auto text-textMuted opacity-20 mb-4" />
+                        <p className="text-sm font-medium text-textMuted">No pricing rates found.</p>
+                        <p className="text-xs text-textMuted mt-1">Try adjusting your search or add a new rate.</p>
                     </div>
                 ) : (
                     filteredPricing.map(rate => (
                         <div
                             key={rate.id}
                             onClick={() => openEditModal(rate)}
-                            className="glass-panel p-6 group hover:border-primary/40 transition-all hover:-translate-y-1 cursor-pointer relative rounded-2xl overflow-hidden"
+                            className="panel p-5 group hover:border-primary/30 transition-all cursor-pointer relative"
                         >
-                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Edit3 size={16} className="text-primary" />
+                            {/* Delete button */}
+                            <button
+                                onClick={(e) => requestDelete(e, rate.id)}
+                                className="absolute top-3 right-3 p-1.5 rounded-lg text-textMuted opacity-0 group-hover:opacity-100 hover:text-error hover:bg-error/5 transition-all z-10"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+
+                            {/* Provider badge + model */}
+                            <div className="mb-4">
+                                <span className="badge bg-primary/10 text-primary text-[10px] font-mono mb-2">
+                                    {rate.provider}
+                                </span>
+                                <h4 className="text-base font-bold truncate mt-1.5 tracking-tight">
+                                    {rate.model === '*' ? 'Default (catch-all)' : rate.model}
+                                </h4>
                             </div>
 
-                            <div className="flex items-start justify-between mb-6">
+                            {/* Costs */}
+                            <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <span className="text-[10px] font-black uppercase tracking-[0.2em] bg-primary/10 text-primary px-2 py-1 rounded-md border border-primary/20">
-                                            {rate.provider}
-                                        </span>
-                                    </div>
-                                    <h4 className="text-xl font-black truncate max-w-[200px] tracking-tight">
-                                        {rate.model === '*' ? 'Default Catch-all' : rate.model}
-                                    </h4>
+                                    <p className="text-[10px] text-textMuted uppercase tracking-wider mb-0.5">Input /1M</p>
+                                    <p className="text-lg font-bold font-mono text-primary tracking-tight">${rate.input_cost_per_1m}</p>
                                 </div>
-                                <button
-                                    onClick={(e) => handleDelete(e, rate.id)}
-                                    className="p-2 text-textDim hover:text-error hover:bg-error/10 rounded-xl transition-all z-10"
-                                    title="Delete this rate"
-                                >
-                                    <Trash2 size={18} />
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-6 mb-2">
-                                <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-textDim uppercase tracking-widest opacity-60">Input (1M)</p>
-                                    <p className="text-2xl font-black text-primary font-mono tracking-tighter">${rate.input_cost_per_1m}</p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-textDim uppercase tracking-widest opacity-60">Output (1M)</p>
-                                    <p className="text-2xl font-black text-white font-mono tracking-tighter">${rate.output_cost_per_1m}</p>
+                                <div>
+                                    <p className="text-[10px] text-textMuted uppercase tracking-wider mb-0.5">Output /1M</p>
+                                    <p className="text-lg font-bold font-mono tracking-tight">${rate.output_cost_per_1m}</p>
                                 </div>
                             </div>
 
-                            <div className="mt-8 pt-4 border-t border-white/5 flex items-center justify-between text-[10px] text-textDim uppercase tracking-widest font-bold opacity-40">
-                                <div className="flex items-center gap-1">
-                                    Last Update: {new Date(rate.updated_at).toLocaleDateString()}
-                                </div>
-                                <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                            {/* Footer */}
+                            <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between">
+                                <span className="text-[10px] text-textMuted font-mono">
+                                    {rate.updated_at ? new Date(rate.updated_at).toLocaleDateString() : '—'}
+                                </span>
+                                <Edit3 size={12} className="text-textMuted opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>
                         </div>
                     ))

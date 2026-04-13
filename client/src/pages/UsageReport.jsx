@@ -1,7 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { BadgeDollarSign, Users, Server } from 'lucide-react';
+import { Users, Server, BarChart3 } from 'lucide-react';
+
+const COLORS = ['#E5A84B', '#7FB685', '#E05C6C', '#D4943A', '#8B7EC8', '#5BA3CF'];
+
+const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    return (
+        <div className="panel px-3 py-2 text-xs">
+            <p className="text-textSecondary mb-0.5">{payload[0].payload.client_name || payload[0].payload.provider_name || payload[0].name}</p>
+            <p className="font-mono font-medium text-primary">${Number(payload[0].value).toFixed(6)}</p>
+        </div>
+    );
+};
 
 export default function UsageReport() {
     const [data, setData] = useState({ costByClient: [], costByProvider: [] });
@@ -20,105 +32,178 @@ export default function UsageReport() {
         fetchData();
     }, []);
 
-    const COLORS = ['#00D1FF', '#00FF94', '#FF0055', '#FFB000', '#9D00FF'];
+    if (loading) {
+        return (
+            <div className="space-y-6 animate-pulse">
+                <div className="h-8 w-48 bg-surfaceHover rounded-lg" />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="panel h-[320px]" />
+                    <div className="panel h-[320px]" />
+                </div>
+                <div className="panel h-[200px]" />
+            </div>
+        );
+    }
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-6">
             <div>
-                <h2 className="text-2xl font-bold">Usage Reports</h2>
-                <p className="text-textDim">Breakdown of token usage and costs by client and provider.</p>
+                <h2 className="page-title">Usage Reports</h2>
+                <p className="page-subtitle">Token usage and cost breakdown by client and provider.</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Cost by Client */}
-                <div className="glass-panel p-6">
-                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                        <Users size={18} className="text-primary" /> Cost by Client
-                    </h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={data.costByClient} layout="vertical">
-                                <XAxis type="number" stroke="#555" fontSize={12} tickFormatter={(value) => `$${value}`} />
-                                <YAxis dataKey="client_name" type="category" stroke="#555" fontSize={12} width={100} />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#121212', borderColor: '#333' }}
-                                    formatter={(value) => [`$${Number(value).toFixed(6)}`, 'Total Cost']}
-                                    cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                                    itemStyle={{ color: '#00D1FF' }}
-                                />
-                                <Bar dataKey="total_cost" fill="#00D1FF" radius={[0, 4, 4, 0]} barSize={20} />
-                            </BarChart>
-                        </ResponsiveContainer>
+                <div className="panel p-5">
+                    <div className="flex items-center gap-2 mb-5">
+                        <Users size={15} className="text-textMuted" />
+                        <h3 className="font-semibold text-sm">Cost by Client</h3>
+                    </div>
+                    <div className="h-[240px] -ml-2">
+                        {data.costByClient.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={data.costByClient} layout="vertical">
+                                    <XAxis
+                                        type="number"
+                                        stroke="#3a3a46"
+                                        fontSize={11}
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tick={{ fill: '#6B6A72' }}
+                                        tickFormatter={v => `$${v}`}
+                                    />
+                                    <YAxis
+                                        dataKey="client_name"
+                                        type="category"
+                                        stroke="#3a3a46"
+                                        fontSize={11}
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tick={{ fill: '#9B9AA0' }}
+                                        width={90}
+                                    />
+                                    <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
+                                    <Bar dataKey="total_cost" fill="#E5A84B" radius={[0, 4, 4, 0]} barSize={18} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-textMuted text-sm">No data</div>
+                        )}
                     </div>
                 </div>
 
                 {/* Cost by Provider */}
-                <div className="glass-panel p-6">
-                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                        <Server size={18} className="text-secondary" /> Cost by Provider
-                    </h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={data.costByProvider}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="total_cost"
-                                >
-                                    {data.costByProvider.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#121212', borderColor: '#333' }}
-                                    formatter={(value) => [`$${Number(value).toFixed(6)}`, 'Total Cost']}
-                                    itemStyle={{ color: '#00D1FF' }}
-                                />
-                                <Legend verticalAlign="middle" align="right" layout="vertical" />
-                            </PieChart>
-                        </ResponsiveContainer>
+                <div className="panel p-5">
+                    <div className="flex items-center gap-2 mb-5">
+                        <Server size={15} className="text-textMuted" />
+                        <h3 className="font-semibold text-sm">Cost by Provider</h3>
+                    </div>
+                    <div className="h-[240px]">
+                        {data.costByProvider.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={data.costByProvider}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={55}
+                                        outerRadius={75}
+                                        paddingAngle={3}
+                                        dataKey="total_cost"
+                                        nameKey="provider"
+                                        strokeWidth={0}
+                                    >
+                                        {data.costByProvider.map((_, index) => (
+                                            <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Legend
+                                        verticalAlign="middle"
+                                        align="right"
+                                        layout="vertical"
+                                        formatter={(value) => <span className="text-xs text-textSecondary">{value}</span>}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-textMuted text-sm">No data</div>
+                        )}
                     </div>
                 </div>
             </div>
 
-            {/* Detailed Table */}
-            <div className="glass-panel overflow-hidden">
-                <div className="p-4 border-b border-white/5">
-                    <h3 className="font-bold flex items-center gap-2">
-                        <BadgeDollarSign size={18} /> Detailed Client Usage
-                    </h3>
+            {/* Detail Table */}
+            <div className="panel overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border">
+                    <div className="flex items-center gap-2">
+                        <BarChart3 size={15} className="text-textMuted" />
+                        <h3 className="font-semibold text-sm">Detailed Client Usage</h3>
+                    </div>
                 </div>
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-white/5 text-textDim uppercase text-xs">
-                        <tr>
-                            <th className="p-4 font-medium">Client Name</th>
-                            <th className="p-4 font-medium text-right">Requests</th>
-                            <th className="p-4 font-medium text-right">Tokens (Prompt)</th>
-                            <th className="p-4 font-medium text-right">Tokens (Comp)</th>
-                            <th className="p-4 font-medium text-right">Total Cost</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                        {data.costByClient.map((client, idx) => (
-                            <tr key={idx} className="hover:bg-white/5 transition-colors">
-                                <td className="p-4 font-medium">{client.client_name || 'System / Legacy'}</td>
-                                <td className="p-4 text-right font-mono">{client.request_count}</td>
-                                <td className="p-4 text-right font-mono text-textDim">{client.prompt_tokens?.toLocaleString()}</td>
-                                <td className="p-4 text-right font-mono text-textDim">{client.completion_tokens?.toLocaleString()}</td>
-                                <td className="p-4 text-right font-mono text-primary font-bold">
-                                    ${client.total_cost?.toFixed(6)}
-                                </td>
+
+                {/* Desktop table */}
+                <div className="hidden sm:block">
+                    <table className="w-full text-left text-sm">
+                        <thead>
+                            <tr className="border-b border-border">
+                                <th className="px-5 py-3 table-header">Client</th>
+                                <th className="px-5 py-3 table-header text-right">Requests</th>
+                                <th className="px-5 py-3 table-header text-right">Prompt Tokens</th>
+                                <th className="px-5 py-3 table-header text-right">Completion Tokens</th>
+                                <th className="px-5 py-3 table-header text-right">Total Cost</th>
                             </tr>
-                        ))}
-                        {data.costByClient.length === 0 && !loading && (
-                            <tr><td colSpan="5" className="p-8 text-center text-textDim">No data available.</td></tr>
-                        )}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-border/50">
+                            {data.costByClient.map((client, idx) => (
+                                <tr key={idx} className="hover:bg-surfaceHover/50 transition-colors">
+                                    <td className="px-5 py-3.5 font-medium text-sm">{client.client_name || 'System / Legacy'}</td>
+                                    <td className="px-5 py-3.5 text-right font-mono text-xs">{client.request_count}</td>
+                                    <td className="px-5 py-3.5 text-right font-mono text-xs text-textSecondary">{client.prompt_tokens?.toLocaleString()}</td>
+                                    <td className="px-5 py-3.5 text-right font-mono text-xs text-textSecondary">{client.completion_tokens?.toLocaleString()}</td>
+                                    <td className="px-5 py-3.5 text-right font-mono text-xs font-semibold text-primary">
+                                        ${client.total_cost?.toFixed(6)}
+                                    </td>
+                                </tr>
+                            ))}
+                            {data.costByClient.length === 0 && (
+                                <tr>
+                                    <td colSpan="5" className="px-5 py-12 text-center text-textMuted text-sm">No data available.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Mobile cards */}
+                <div className="sm:hidden divide-y divide-border/50">
+                    {data.costByClient.map((client, idx) => (
+                        <div key={idx} className="p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="font-medium text-sm">{client.client_name || 'System'}</span>
+                                <span className="font-mono text-xs font-semibold text-primary">${client.total_cost?.toFixed(6)}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                <div>
+                                    <div className="text-xs font-mono">{client.request_count}</div>
+                                    <div className="text-[10px] text-textMuted">requests</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs font-mono text-textSecondary">{client.prompt_tokens?.toLocaleString()}</div>
+                                    <div className="text-[10px] text-textMuted">prompt</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs font-mono text-textSecondary">{client.completion_tokens?.toLocaleString()}</div>
+                                    <div className="text-[10px] text-textMuted">completion</div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                    {data.costByClient.length === 0 && (
+                        <div className="p-12 text-center text-textMuted text-sm">No data available.</div>
+                    )}
+                </div>
             </div>
         </div>
     );

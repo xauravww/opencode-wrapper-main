@@ -1,3 +1,5 @@
+import { ModelPricing } from '../db/mongo.js';
+
 export const PRICING = {
     'openai': { input: 2.50, output: 10.00 },
     'anthropic': { input: 3.00, output: 15.00 },
@@ -13,12 +15,22 @@ export const PRICING = {
     'default': { input: 0.50, output: 1.50 }
 };
 
-export function getPricing(provider) {
+export async function getPricing(provider, model) {
+    if (model) {
+        try {
+            const dbPricing = await ModelPricing.findOne({ provider, model });
+            if (dbPricing) {
+                return { input: dbPricing.input_cost_per_1m, output: dbPricing.output_cost_per_1m };
+            }
+        } catch (e) {
+            console.warn(`Failed to fetch pricing for ${provider}/${model} from DB, using fallback.`);
+        }
+    }
     return PRICING[provider] || PRICING['default'];
 }
 
-export function calculateCost(usage, provider) {
-    const pricing = getPricing(provider);
+export async function calculateCost(usage, provider, model) {
+    const pricing = await getPricing(provider, model);
     const inputCost = ((usage.prompt_tokens || 0) / 1000000) * pricing.input;
     const outputCost = ((usage.completion_tokens || 0) / 1000000) * pricing.output;
     return inputCost + outputCost;

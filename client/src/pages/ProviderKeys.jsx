@@ -1,17 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { Trash2, Plus, Key, CheckCircle, XCircle } from 'lucide-react';
+import Select from '../components/Select';
+import ConfirmDialog from '../components/ConfirmDialog';
+import Toast from '../components/Toast';
+
+const providerList = [
+    'openai', 'anthropic', 'google', 'mistral', 'groq', 'cerebras',
+    'together', 'fireworks', 'nvidia', 'deepseek', 'openrouter', 'cohere', 'opencode'
+];
+
+const providerOptions = providerList.sort().map(p => ({
+    value: p,
+    label: p.charAt(0).toUpperCase() + p.slice(1)
+}));
 
 export default function ProviderKeys() {
     const [keys, setKeys] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [adding, setAdding] = useState(false);
-
-    const providers = [
-        'openai', 'anthropic', 'google', 'mistral', 'groq', 'cerebras', 'together', 'fireworks', 'nvidia', 'deepseek', 'openrouter', 'cohere', 'opencode'
-    ];
-
+    const [showForm, setShowForm] = useState(false);
     const [formData, setFormData] = useState({ provider: 'openai', key: '' });
+    const [toast, setToast] = useState({ message: '', type: 'success' });
+    const [confirmState, setConfirmState] = useState({ open: false, id: null });
 
     const fetchKeys = async () => {
         try {
@@ -19,31 +29,37 @@ export default function ProviderKeys() {
             setKeys(res.data);
         } catch (error) {
             console.error(error);
+        } finally {
+            setLoading(false);
         }
     };
 
-    useEffect(() => {
-        fetchKeys();
-    }, []);
+    useEffect(() => { fetchKeys(); }, []);
 
     const handleAddKey = async (e) => {
         e.preventDefault();
         try {
             await api.post('/admin/provider-keys', { provider_name: formData.provider, api_key: formData.key });
             setFormData({ provider: 'openai', key: '' });
+            setShowForm(false);
             fetchKeys();
         } catch (error) {
-            alert('Error adding key');
+            setToast({ message: 'Failed to add key', type: 'error' });
         }
     };
 
-    const handleDeleteKey = async (id) => {
-        if (!window.confirm('Are you sure? This will stop traffic to this provider key.')) return;
+    const requestDelete = (id) => {
+        setConfirmState({ open: true, id });
+    };
+
+    const handleDeleteKey = async () => {
+        const id = confirmState.id;
+        setConfirmState({ open: false, id: null });
         try {
             await api.delete(`/admin/provider-keys/${id}`);
             fetchKeys();
         } catch (error) {
-            alert('Error deleting key');
+            setToast({ message: 'Failed to delete key', type: 'error' });
         }
     };
 
@@ -52,140 +68,155 @@ export default function ProviderKeys() {
             await api.patch(`/admin/provider-keys/${id}/status`, { is_active: !currentStatus });
             fetchKeys();
         } catch (error) {
-            alert('Error updating status');
+            setToast({ message: 'Failed to update status', type: 'error' });
         }
     };
 
+    const grouped = keys.reduce((acc, key) => {
+        if (!acc[key.provider_name]) acc[key.provider_name] = [];
+        acc[key.provider_name].push(key);
+        return acc;
+    }, {});
+
     return (
-        <div className="space-y-6">
-            <div>
-                <h2 className="text-2xl font-bold">Provider Connections</h2>
-                <p className="text-textDim">Manage backend API keys for LLM providers.</p>
+        <div className="max-w-5xl space-y-6">
+            <ConfirmDialog
+                open={confirmState.open}
+                title="Delete provider key"
+                message="Traffic will stop routing to this key. This cannot be undone."
+                confirmLabel="Delete"
+                onConfirm={handleDeleteKey}
+                onCancel={() => setConfirmState({ open: false, id: null })}
+            />
+            <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
+
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h2 className="page-title">Provider Connections</h2>
+                    <p className="page-subtitle">Manage backend API keys for LLM providers.</p>
+                </div>
+                <button
+                    onClick={() => setShowForm(!showForm)}
+                    className="btn-primary flex items-center gap-2 shrink-0"
+                >
+                    <Plus size={16} />
+                    Add Connection
+                </button>
             </div>
 
-            {/* Add Key Form */}
-            <div className="glass-panel p-6">
-                <h3 className="text-lg font-semibold mb-4">Add New Connection</h3>
-                <form onSubmit={handleAddKey} className="flex gap-4 items-end">
-                    <div className="flex-1 space-y-2">
-                        <label className="text-xs uppercase font-bold text-textDim">Provider</label>
-                        <select
-                            className="input-field"
-                            value={formData.provider}
-                            onChange={e => setFormData({ ...formData, provider: e.target.value })}
-                        >
-                            {providers.sort().map(p => (
-                                <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="flex-[2] space-y-2">
-                        <label className="text-xs uppercase font-bold text-textDim">API Key</label>
-                        <input
-                            type="password"
-                            className="input-field"
-                            placeholder="sk-..."
-                            value={formData.key}
-                            onChange={e => setFormData({ ...formData, key: e.target.value })}
-                            required
-                        />
-                    </div>
-                    <button type="submit" className="btn-primary flex items-center gap-2">
-                        <Plus size={18} /> Add Key
-                    </button>
-                </form>
-            </div>
+            {/* Add form */}
+            {showForm && (
+                <div className="panel p-5 animate-slide-down">
+                    <form onSubmit={handleAddKey} className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-3">
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Provider</label>
+                                <Select
+                                    value={formData.provider}
+                                    onChange={val => setFormData({ ...formData, provider: val })}
+                                    options={providerOptions}
+                                    placeholder="Select provider"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">API Key</label>
+                                <input
+                                    type="password"
+                                    className="input-field w-full"
+                                    placeholder="sk-..."
+                                    value={formData.key}
+                                    onChange={e => setFormData({ ...formData, key: e.target.value })}
+                                    required
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button type="submit" className="btn-primary flex items-center gap-2">
+                                <Key size={14} />
+                                Add Key
+                            </button>
+                            <button type="button" onClick={() => setShowForm(false)} className="btn-ghost">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
 
-            {/* Keys List */}
-            <div className="glass-panel overflow-hidden">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-white/5 text-textDim uppercase text-xs">
-                        <tr>
-                            <th className="p-4 font-medium">Provider</th>
-                            <th className="p-4 font-medium">Source</th>
-                            <th className="p-4 font-medium">Status</th>
-                            <th className="p-4 font-medium">Added At</th>
-                            <th className="p-4 font-medium text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                        {Object.entries(keys.reduce((acc, key) => {
-                            if (!acc[key.provider_name]) acc[key.provider_name] = [];
-                            acc[key.provider_name].push(key);
-                            return acc;
-                        }, {})).map(([provider, providerKeys]) => (
-                            <React.Fragment key={provider}>
-                                {/* Provider Group Header */}
-                                <tr className="bg-white/5">
-                                    <td colSpan="4" className="p-3">
-                                        <div className="flex items-center gap-3">
-                                            <span className="font-bold text-lg capitalize">{provider}</span>
-                                            <span className="text-xs font-mono bg-white/10 text-textDim px-2 py-0.5 rounded-full border border-white/10">
-                                                {providerKeys.length} {providerKeys.length === 1 ? 'Key' : 'Keys'}
+            {/* Grouped provider keys */}
+            {Object.entries(grouped).length === 0 && !loading ? (
+                <div className="panel p-12 text-center text-textMuted text-sm">
+                    No dynamic keys configured. The system is using .env keys only.
+                </div>
+            ) : (
+                Object.entries(grouped).map(([provider, providerKeys]) => (
+                    <div key={provider} className="panel overflow-hidden">
+                        <div className="px-5 py-3.5 border-b border-border bg-surfaceHover/30 flex items-center gap-3">
+                            <span className="font-semibold text-sm capitalize">{provider}</span>
+                            <span className="badge-neutral font-mono">
+                                {providerKeys.length} {providerKeys.length === 1 ? 'key' : 'keys'}
+                            </span>
+                        </div>
+
+                        <div className="divide-y divide-border/50">
+                            {providerKeys.map(key => (
+                                <div key={key.id} className="px-5 py-3.5 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-surfaceHover/30 transition-colors">
+                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                        <Key size={14} className="text-textMuted shrink-0" />
+                                        <span className="text-sm text-textSecondary truncate">
+                                            {String(key.id || '').includes('env')
+                                                ? `Key #${parseInt(String(key.id).split('-').pop()) + 1}`
+                                                : 'Database Key'
+                                            }
+                                        </span>
+                                        {key.source === 'env' ? (
+                                            <span className="badge bg-blue-500/10 text-blue-400 font-mono text-[10px]">.ENV</span>
+                                        ) : (
+                                            <span className="badge bg-purple-500/10 text-purple-400 font-mono text-[10px]">DB</span>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center gap-3 shrink-0">
+                                        {key.created_at && (
+                                            <span className="text-[11px] text-textMuted font-mono hidden md:block">
+                                                {new Date(key.created_at).toLocaleDateString()}
                                             </span>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {/* Key Rows */}
-                                {providerKeys.map(key => (
-                                    <tr key={key.id} className="hover:bg-white/5 transition-colors">
-                                        <td className="p-4 pl-8 font-medium capitalize flex items-center gap-2">
-                                            <div className="w-1 h-8 border-l-2 border-white/10 absolute left-4"></div>
-                                            <Key size={14} className="text-primary opacity-50" />
-                                            <span className="text-textDim text-sm">Key {key.id.toString().includes('env') ? '#' + (parseInt(key.id.split('-').pop()) + 1) : '(DB)'}</span>
-                                        </td>
-                                        <td className="p-4">
-                                            {key.source === 'env' ? (
-                                                <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-400 text-xs font-mono">.ENV</span>
-                                            ) : (
-                                                <span className="px-2 py-1 rounded bg-purple-500/20 text-purple-400 text-xs font-mono">DATABASE</span>
-                                            )}
-                                        </td>
-                                        <td className="p-4">
-                                            {key.source === 'env' ? (
-                                                <span className="flex items-center gap-1 text-secondary text-xs font-bold uppercase">
-                                                    <CheckCircle size={12} /> Active
-                                                </span>
-                                            ) : (
-                                                <button
-                                                    onClick={() => handleToggleStatus(key.id, key.is_active)}
-                                                    className={`flex items-center gap-1 text-xs font-bold uppercase px-2 py-1 rounded transition-colors ${key.is_active
-                                                        ? 'bg-secondary/20 text-secondary hover:bg-secondary/30'
-                                                        : 'bg-white/10 text-textDim hover:bg-white/20'
-                                                        }`}
-                                                >
-                                                    {key.is_active ? <><CheckCircle size={12} /> Active</> : <><XCircle size={12} /> Inactive</>}
-                                                </button>
-                                            )}
-                                        </td>
-                                        <td className="p-4 text-textDim text-xs font-mono">
-                                            {key.created_at ? new Date(key.created_at).toLocaleString() : '-'}
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            {key.source !== 'env' && (
-                                                <button
-                                                    onClick={() => handleDeleteKey(key.id)}
-                                                    className="text-textDim hover:text-error hover:bg-error/10 p-2 rounded transition-colors"
-                                                    title="Delete Key"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </React.Fragment>
-                        ))}
-                        {keys.length === 0 && (
-                            <tr>
-                                <td colSpan="5" className="p-8 text-center text-textDim">
-                                    No dynamic keys found. System is using .env keys only.
-                                </td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
+                                        )}
+
+                                        {key.source === 'env' ? (
+                                            <span className="badge-success text-[11px]">
+                                                <CheckCircle size={11} /> Active
+                                            </span>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleToggleStatus(key.id, key.is_active)}
+                                                className={`badge text-[11px] cursor-pointer transition-colors ${
+                                                    key.is_active
+                                                        ? 'bg-secondary/10 text-secondary hover:bg-secondary/20'
+                                                        : 'bg-surfaceHighlight text-textMuted hover:bg-surfaceHover'
+                                                }`}
+                                            >
+                                                {key.is_active ? <><CheckCircle size={11} /> Active</> : <><XCircle size={11} /> Inactive</>}
+                                            </button>
+                                        )}
+
+                                        {key.source !== 'env' && (
+                                            <button
+                                                onClick={() => requestDelete(key.id)}
+                                                className="p-1.5 rounded-lg text-textMuted hover:text-error hover:bg-error/5 transition-colors"
+                                                title="Delete Key"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))
+            )}
         </div>
     );
 }

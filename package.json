@@ -7,7 +7,12 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test tests/",
+    "create-admin": "node scripts/create-admin.js",
+    "clear-stats": "node scripts/clear-stats.js",
+    "setup-test-key": "node scripts/setup_test_key.js",
+    "check-log": "node scripts/check_log.js",
+    "migrate": "node scripts/migrate_to_mongo.js"
   },
   "keywords": [
     "opencode",
@@ -28,10 +33,13 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.1.1",
+    "mongoose": "^9.4.1",
     "morgan": "^1.10.1",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.12",
+    "pg": "^8.20.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "xlsx": "^0.18.5"

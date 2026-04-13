@@ -1,6 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Search, Filter, ChevronLeft, ChevronRight, Clock, DollarSign, Database, CheckCircle, XCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Database, Filter } from 'lucide-react';
+import Select from '../components/Select';
+
+const statusOptions = [
+    { value: '', label: 'All Statuses' },
+    { value: '200', label: '200 OK' },
+    { value: '429', label: '429 Rate Limit' },
+    { value: '500', label: '500 Error' },
+];
+
+const providerOptions = [
+    { value: '', label: 'All Providers' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'groq', label: 'Groq' },
+    { value: 'anthropic', label: 'Anthropic' },
+    { value: 'mistral', label: 'Mistral' },
+    { value: 'google', label: 'Google' },
+    { value: 'deepseek', label: 'DeepSeek' },
+    { value: 'together', label: 'Together' },
+];
 
 export default function RequestLogs() {
     const [logs, setLogs] = useState([]);
@@ -27,130 +46,189 @@ export default function RequestLogs() {
         }
     };
 
-    useEffect(() => {
-        fetchLogs();
-    }, [page, providerFilter, statusFilter]);
+    useEffect(() => { fetchLogs(); }, [page, providerFilter, statusFilter]);
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            {/* Header + Filters */}
+            <div className="flex flex-col gap-4">
                 <div>
-                    <h2 className="text-2xl font-bold">Request Explorer</h2>
-                    <p className="text-textDim">Detailed log of all API requests processed by the wrapper.</p>
+                    <h2 className="page-title">Request Explorer</h2>
+                    <p className="page-subtitle">Detailed log of all API requests processed by the wrapper.</p>
                 </div>
-                <div className="flex gap-2">
-                    <select
-                        className="input-field text-sm"
+                <div className="flex flex-wrap items-center gap-2">
+                    <Filter size={14} className="text-textMuted" />
+                    <Select
                         value={statusFilter}
-                        onChange={e => setStatusFilter(e.target.value)}
-                    >
-                        <option value="">All Statuses</option>
-                        <option value="200">200 OK</option>
-                        <option value="429">429 Rate Limit</option>
-                        <option value="500">500 Error</option>
-                    </select>
-                    <select
-                        className="input-field text-sm"
+                        onChange={val => { setStatusFilter(val); setPage(1); }}
+                        options={statusOptions}
+                        placeholder="All Statuses"
+                        className="w-[160px]"
+                    />
+                    <Select
                         value={providerFilter}
-                        onChange={e => setProviderFilter(e.target.value)}
-                    >
-                        <option value="">All Providers</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="groq">Groq</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="mistral">Mistral</option>
-                    </select>
+                        onChange={val => { setProviderFilter(val); setPage(1); }}
+                        options={providerOptions}
+                        placeholder="All Providers"
+                        className="w-[160px]"
+                    />
                 </div>
             </div>
 
-            <div className="glass-panel overflow-hidden">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-white/5 text-textDim uppercase text-xs">
-                        <tr>
-                            <th className="p-4 font-medium">Time</th>
-                            <th className="p-4 font-medium">Client</th>
-                            <th className="p-4 font-medium">Provider / Model</th>
-                            <th className="p-4 font-medium font-heading tracking-wider">Status</th>
-                            <th className="p-4 font-medium font-heading tracking-wider text-right">Tokens</th>
-                            <th className="p-4 font-medium font-heading tracking-wider">Latency</th>
-                            <th className="p-4 font-medium text-right">Cost</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                        {logs.map(log => (
-                            <tr key={log.id} className="hover:bg-white/5 transition-colors">
-                                <td className="p-4 text-textDim text-xs font-mono">
-                                    {new Date(log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z').toLocaleString()}
-                                </td>
-                                <td className="p-4 font-medium">
-                                    {log.client_name ? (
-                                        <span className="text-primary">{log.client_name}</span>
-                                    ) : (
-                                        <span className="text-textDim italic">System / Legacy</span>
-                                    )}
-                                </td>
-                                <td className="p-4">
-                                    <div className="flex items-center gap-2">
-                                        <Database size={14} className="text-textDim" />
-                                        <span className="capitalize">{log.provider}</span>
-                                        <span className="text-textDim text-xs bg-white/10 px-1.5 py-0.5 rounded ml-1">{log.model}</span>
-                                    </div>
-                                </td>
-                                <td className="p-4">
-                                    {log.status_code === 200 ? (
-                                        <span className="inline-flex items-center gap-1 text-secondary text-xs font-bold uppercase tracking-wider">
-                                            <CheckCircle size={12} /> Success
-                                        </span>
-                                    ) : (
-                                        <span className="inline-flex items-center gap-1 text-error text-xs font-bold uppercase tracking-wider">
-                                            <XCircle size={12} /> {log.status_code}
-                                        </span>
-                                    )}
-                                </td>
-                                <td className="p-4 text-right font-mono text-textDim text-xs">
-                                    <div>{log.prompt_tokens + log.completion_tokens}</div>
-                                    <div className="opacity-50 text-[10px]">{log.prompt_tokens} / {log.completion_tokens}</div>
-                                </td>
-                                <td className="p-4 font-mono text-textDim">
-                                    {log.latency_ms}ms
-                                </td>
-                                <td className="p-4 text-right font-mono text-text">
-                                    ${log.cost_usd ? log.cost_usd.toFixed(6) : '0.000000'}
-                                </td>
+            {/* Table - desktop */}
+            <div className="panel overflow-hidden hidden md:block">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead>
+                            <tr className="border-b border-border">
+                                <th className="px-5 py-3 table-header">Time</th>
+                                <th className="px-5 py-3 table-header">Client</th>
+                                <th className="px-5 py-3 table-header">Provider / Model</th>
+                                <th className="px-5 py-3 table-header">Status</th>
+                                <th className="px-5 py-3 table-header text-right">Tokens</th>
+                                <th className="px-5 py-3 table-header text-right">Latency</th>
+                                <th className="px-5 py-3 table-header text-right">Cost</th>
                             </tr>
-                        ))}
-                        {logs.length === 0 && !loading && (
-                            <tr>
-                                <td colSpan="6" className="p-12 text-center text-textDim">
-                                    No requests found matching filters.
-                                </td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-border/50">
+                            {logs.map(log => (
+                                <tr key={log.id} className="hover:bg-surfaceHover/50 transition-colors">
+                                    <td className="px-5 py-3 text-xs text-textSecondary font-mono whitespace-nowrap">
+                                        {new Date(log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                    </td>
+                                    <td className="px-5 py-3">
+                                        {log.client_name ? (
+                                            <span className="text-sm font-medium text-primary">{log.client_name}</span>
+                                        ) : (
+                                            <span className="text-xs text-textMuted italic">System</span>
+                                        )}
+                                    </td>
+                                    <td className="px-5 py-3">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm capitalize">{log.provider}</span>
+                                            <span className="badge-neutral font-mono text-[10px]">{log.model}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-5 py-3">
+                                        {log.status_code === 200 ? (
+                                            <span className="badge-success text-[11px]">
+                                                <CheckCircle size={11} /> OK
+                                            </span>
+                                        ) : (
+                                            <span className="badge-error text-[11px]">
+                                                <XCircle size={11} /> {log.status_code}
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="px-5 py-3 text-right font-mono text-xs text-textSecondary">
+                                        <div>{(log.prompt_tokens + log.completion_tokens).toLocaleString()}</div>
+                                        <div className="text-[10px] text-textMuted">{log.prompt_tokens} / {log.completion_tokens}</div>
+                                    </td>
+                                    <td className="px-5 py-3 text-right font-mono text-xs text-textSecondary">
+                                        {log.latency_ms}ms
+                                    </td>
+                                    <td className="px-5 py-3 text-right font-mono text-xs font-medium">
+                                        ${log.cost_usd ? log.cost_usd.toFixed(6) : '0.000000'}
+                                    </td>
+                                </tr>
+                            ))}
+                            {logs.length === 0 && !loading && (
+                                <tr>
+                                    <td colSpan="7" className="px-5 py-12 text-center text-textMuted text-sm">
+                                        No requests found matching filters.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
 
                 {/* Pagination */}
-                <div className="p-4 border-t border-white/5 flex items-center justify-between">
-                    <span className="text-xs text-textDim">
-                        Showing {logs.length} of {pagination.total_items} results
+                <div className="px-5 py-3 border-t border-border flex items-center justify-between">
+                    <span className="text-xs text-textMuted">
+                        {logs.length} of {pagination.total_items || 0} results
                     </span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-1">
                         <button
                             disabled={page === 1}
                             onClick={() => setPage(p => Math.max(1, p - 1))}
-                            className="p-2 hover:bg-white/10 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1.5 rounded-lg hover:bg-surfaceHover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         >
-                            <ChevronLeft size={16} />
+                            <ChevronLeft size={14} />
                         </button>
-                        <span className="flex items-center px-2 text-sm font-mono text-textDim">
-                            Page {page} of {pagination.total_pages || 1}
+                        <span className="px-3 py-1 text-xs font-mono text-textSecondary">
+                            {page} / {pagination.total_pages || 1}
                         </span>
                         <button
-                            disabled={page >= pagination.total_pages}
+                            disabled={page >= (pagination.total_pages || 1)}
                             onClick={() => setPage(p => p + 1)}
-                            className="p-2 hover:bg-white/10 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1.5 rounded-lg hover:bg-surfaceHover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         >
-                            <ChevronRight size={16} />
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Cards - mobile */}
+            <div className="md:hidden space-y-3">
+                {logs.map(log => (
+                    <div key={log.id} className="panel p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm capitalize font-medium">{log.provider}</span>
+                                <span className="badge-neutral font-mono text-[10px]">{log.model}</span>
+                            </div>
+                            {log.status_code === 200 ? (
+                                <span className="badge-success text-[11px]"><CheckCircle size={11} /> OK</span>
+                            ) : (
+                                <span className="badge-error text-[11px]"><XCircle size={11} /> {log.status_code}</span>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                            <div>
+                                <div className="text-xs font-mono font-medium">{(log.prompt_tokens + log.completion_tokens).toLocaleString()}</div>
+                                <div className="text-[10px] text-textMuted">tokens</div>
+                            </div>
+                            <div>
+                                <div className="text-xs font-mono font-medium">{log.latency_ms}ms</div>
+                                <div className="text-[10px] text-textMuted">latency</div>
+                            </div>
+                            <div>
+                                <div className="text-xs font-mono font-medium">${log.cost_usd?.toFixed(6) || '0'}</div>
+                                <div className="text-[10px] text-textMuted">cost</div>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-textMuted">
+                            <span>{log.client_name || 'System'}</span>
+                            <span className="font-mono">
+                                {new Date(log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        </div>
+                    </div>
+                ))}
+                {logs.length === 0 && !loading && (
+                    <div className="panel p-12 text-center text-textMuted text-sm">No requests found.</div>
+                )}
+
+                {/* Mobile pagination */}
+                <div className="flex items-center justify-between pt-2">
+                    <span className="text-xs text-textMuted">{logs.length} of {pagination.total_items || 0}</span>
+                    <div className="flex items-center gap-1">
+                        <button
+                            disabled={page === 1}
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            className="p-2 rounded-lg hover:bg-surfaceHover disabled:opacity-30 transition-colors"
+                        >
+                            <ChevronLeft size={14} />
+                        </button>
+                        <span className="px-2 text-xs font-mono text-textSecondary">{page}/{pagination.total_pages || 1}</span>
+                        <button
+                            disabled={page >= (pagination.total_pages || 1)}
+                            onClick={() => setPage(p => p + 1)}
+                            className="p-2 rounded-lg hover:bg-surfaceHover disabled:opacity-30 transition-colors"
+                        >
+                            <ChevronRight size={14} />
                         </button>
                     </div>
                 </div>
