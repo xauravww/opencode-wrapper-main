@@ -85,7 +85,7 @@ class ProviderManager {
         keyIndex: 0
       },
       'aitools': {
-        baseUrl: 'https://api.aitools.com/v1',
+        baseUrl: 'https://platform.aitools.cfd/api/v1',
         apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY),
         models: ['gpt-4-turbo'],
         keyIndex: 0
