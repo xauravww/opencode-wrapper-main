@@ -319,34 +319,37 @@ async function start() {
   app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!(username && password)) {
-      res.status(400).send("All input is required");
-      return;
+      return res.status(400).send("All input is required");
     }
 
+    const adminUser = process.env.ADMIN_USER;
+    const adminPass = process.env.ADMIN_PASS;
+
+    // Authenticate against env credentials
+    if (adminUser && adminPass && username === adminUser && password === adminPass) {
+      const token = jwt.sign(
+        { user_id: 'admin', username },
+        JWT_SECRET,
+        { expiresIn: "24h" }
+      );
+      return res.json({ token, username });
+    }
+
+    // Fallback: check DB for additional admin users
     try {
       const user = await User.findOne({ username });
-      console.log(`Login attempt for: ${username}`);
-      
-      if (user) {
-        const passwordIsValid = bcrypt.compareSync(password, user.password_hash);
-        console.log(`User found. Password valid: ${passwordIsValid}`);
-
-        if (passwordIsValid) {
-          // Create token
-          const token = jwt.sign(
-            { user_id: user._id, username },
-            JWT_SECRET,
-            { expiresIn: "24h" }
-          );
-          res.json({ token, username });
-          return;
-        }
-      } else {
-        console.log('User not found');
+      if (user && bcrypt.compareSync(password, user.password_hash)) {
+        const token = jwt.sign(
+          { user_id: user._id, username },
+          JWT_SECRET,
+          { expiresIn: "24h" }
+        );
+        return res.json({ token, username });
       }
     } catch (err) {
       console.error('Login error:', err);
     }
+
     res.status(400).send("Invalid Credentials");
   });
 

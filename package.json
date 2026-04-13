@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test tests/",
+    "test": "node --test tests/test.js",
     "create-admin": "node scripts/create-admin.js",
     "clear-stats": "node scripts/clear-stats.js",
     "setup-test-key": "node scripts/setup_test_key.js",
