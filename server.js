@@ -781,7 +781,11 @@ async function start() {
                 }
               })
               .catch(error => {
-                console.warn(`⚠️ Failed to get models from ${providerName}:`, error.message);
+                // Only log warning if it's not a 404 (which we expect for some providers)
+                if (!error.message.includes('404')) {
+                  console.warn(`⚠️ Failed to get models from ${providerName}:`, error.message);
+                }
+                
                 // Add fallback models for this provider
                 config.models.forEach(modelId => {
                   allModels.push({
@@ -982,7 +986,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             // Create a pseudo-response object for trackStreamAndLog if we replaced the body
             const responseForTracker = { ...result, body: nodeStream };
 
-            trackStreamAndLog(responseForTracker, res, db, {
+            trackStreamAndLog(responseForTracker, res, {
               wrapperKeyId: req.wrapperKeyId,
               provider: selectedProvider,
               model: actualModel,
@@ -1102,7 +1106,15 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             });
             return;
           } else {
-            const result = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+            let result;
+            if (contentType.includes('application/json')) {
+               result = await response.json();
+            } else {
+               const text = await response.text();
+               throw new Error(`Zen API returned non-JSON: ${text.substring(0, 50)}`);
+            }
+
             console.log(`✅ Chat completion fallback response sent to ${req.ip} via opencode:`, {
               model: requestedModel,
               tokens: result.usage,
@@ -1251,19 +1263,17 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
       // Log request
       try {
         const inputCost = (input.length / 1000) * 0.015; // Approx cost calculation
-        db.prepare(`
-           INSERT INTO request_logs (wrapper_key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status_code, cost_usd)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         `).run(
-          req.wrapperKeyId,
-          'edge-tts',
-          model || 'tts-1',
-          input.length, // Using chars as "tokens" for rough logging
-          0,
-          Date.now() - startTime,
-          200,
-          inputCost
-        );
+        
+        await new RequestLog({
+          wrapper_key_id: req.wrapperKeyId,
+          provider: 'edge-tts',
+          model: model || 'tts-1',
+          prompt_tokens: input.length, // Using chars as "tokens" for rough logging
+          completion_tokens: 0,
+          latency_ms: Date.now() - startTime,
+          status_code: 200,
+          cost_usd: inputCost
+        }).save();
       } catch (logErr) {
         console.error('TTS logging failed:', logErr);
       }

@@ -10,7 +10,8 @@ class ProviderManager {
         baseUrl: process.env.ZEN_API_URL || 'https://api.opencode.ai/v1',
         apiKeys: this.parseApiKeys(process.env.ZEN_API_KEY),
         models: ['grok-code', 'grok-vision'],
-        keyIndex: 0
+        keyIndex: 0,
+        healthCheckEndpoint: '/chat/completions' // Opencode might not have /models
       },
       'openai': {
         baseUrl: 'https://api.openai.com/v1',
@@ -240,8 +241,16 @@ class ProviderManager {
     }
 
     p.error_rate = 1 - (p.successful_requests / p.total_requests);
+    
+    // Improved Scoring: Be more reactive to failures
     const targetScore = success ? Math.max(0, 100 - (latency / 100)) : 0;
-    p.speed_score = (p.speed_score * 0.9) + (targetScore * 0.1);
+    const alpha = success ? 0.1 : 0.3; // Take a bigger hit on failures (30% vs 10%)
+    p.speed_score = (p.speed_score * (1 - alpha)) + (targetScore * alpha);
+
+    // Ensure score doesn't stay too high if it keeps failing
+    if (!success && p.speed_score > 50) {
+      p.speed_score = 50; // Immediate drop to mid-range on any failure if it was high
+    }
 
     try {
       await ProviderStats.updateOne(
@@ -365,13 +374,30 @@ class ProviderManager {
 
         const response = await fetch(url, {
           ...options,
-          headers
+          headers,
+          timeout: 30000 // 30s timeout
         });
 
         const latency = Date.now() - startTime;
+        const contentType = response.headers.get('content-type') || '';
         
         if (response.ok) {
-          const data = await response.json();
+          let data;
+          if (contentType.includes('application/json')) {
+            try {
+              data = await response.json();
+            } catch (e) {
+              const text = await response.text();
+              console.warn(`⚠️ Provider ${currentProvider} returned OK but invalid JSON: ${text.substring(0, 100)}`);
+              throw new Error("Invalid JSON response");
+            }
+          } else {
+            const text = await response.text();
+            console.warn(`⚠️ Provider ${currentProvider} returned OK but content-type is ${contentType}: ${text.substring(0, 100)}`);
+            // If it's not JSON but OK, and user expected JSON, it's an error for us
+            throw new Error(`Unexpected content-type: ${contentType}`);
+          }
+
           await this.updateStats(currentProvider, latency, true);
           return data;
         } else {
@@ -384,11 +410,12 @@ class ProviderManager {
             currentProvider = this.getBestProvider();
             continue;
           }
-          throw new Error(`Provider error: ${response.status}`);
+          throw new Error(`Provider error: ${response.status} - ${errorText.substring(0, 50)}`);
         }
       } catch (error) {
+        const latency = Date.now() - startTime;
         console.error(`❌ Request error for ${currentProvider}:`, error.message);
-        await this.updateStats(currentProvider, Date.now() - startTime, false);
+        await this.updateStats(currentProvider, latency, false);
         attempts++;
         currentProvider = this.getBestProvider();
       }
@@ -422,13 +449,31 @@ class ProviderManager {
 
   async checkAllHealth() {
     for (const name of Object.keys(this.providers)) {
-      if (this.providers[name].apiKeys.length > 0) {
+      const config = this.providers[name];
+      if (config.apiKeys && config.apiKeys.length > 0) {
         try {
-          // Normalizing for Gemini /models if needed (handeled in server.js but here we just check OK)
-          await this.makeRequest(name, '/models', { method: 'GET' });
+          const endpoint = config.healthCheckEndpoint || '/models';
+          const options = endpoint === '/chat/completions' 
+            ? { 
+                method: 'POST', 
+                body: JSON.stringify({ 
+                  model: config.models[0], 
+                  messages: [{ role: 'user', content: 'hi' }], 
+                  max_tokens: 1 
+                }) 
+              } 
+            : { method: 'GET' };
+
+          await this.makeRequest(name, endpoint, options);
           this.stats.providers[name].health_status = 'healthy';
         } catch (e) {
-          this.stats.providers[name].health_status = 'degraded';
+          console.warn(`Health check failed for ${name}: ${e.message}`);
+          // If it's just a 404 on /models, maybe it's still "healthy" for completions?
+          if (e.message.includes('404')) {
+             this.stats.providers[name].health_status = 'degraded';
+          } else {
+             this.stats.providers[name].health_status = 'unhealthy';
+          }
         }
       }
     }
