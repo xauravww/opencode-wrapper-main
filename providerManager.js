@@ -7,9 +7,9 @@ class ProviderManager {
   constructor() {
     this.providers = {
       'opencode': {
-        baseUrl: process.env.ZEN_API_URL || 'https://api.opencode.ai/v1',
+        baseUrl: process.env.ZEN_BASE_URL || process.env.ZEN_API_URL || 'https://opencode.ai/zen/v1',
         apiKeys: this.parseApiKeys(process.env.ZEN_API_KEY),
-        models: ['grok-code', 'grok-vision'],
+        models: ['minimax-m2.5-free', 'grok-2', 'grok-2-vision'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions' // Opencode might not have /models
       },
@@ -41,7 +41,8 @@ class ProviderManager {
         baseUrl: 'https://integrate.api.nvidia.com/v1',
         apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY),
         models: ['meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct'],
-        keyIndex: 0
+        keyIndex: 0,
+        healthCheckEndpoint: '/chat/completions'
       },
       'cerebras': {
         baseUrl: 'https://api.cerebras.ai/v1',
@@ -89,7 +90,8 @@ class ProviderManager {
         baseUrl: 'https://platform.aitools.cfd/api/v1',
         apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY),
         models: ['gpt-4-turbo'],
-        keyIndex: 0
+        keyIndex: 0,
+        healthCheckEndpoint: '/chat/completions'
       }
     };
 
@@ -344,83 +346,75 @@ class ProviderManager {
   }
 
   async makeRequest(providerName, endpoint, options = {}) {
-    let currentProvider = providerName || this.getBestProvider();
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      const p = this.providers[currentProvider];
-      if (!p) {
-        attempts++;
-        currentProvider = this.getBestProvider();
-        continue;
-      }
-
-      const apiKey = this.getNextKey(currentProvider);
-      if (!apiKey) {
-        attempts++;
-        currentProvider = this.getBestProvider();
-        continue;
-      }
-      
-      const startTime = Date.now();
-      try {
-        const url = p.baseUrl + endpoint;
-        const headers = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          ...options.headers
-        };
-
-        const response = await fetch(url, {
-          ...options,
-          headers,
-          timeout: 30000 // 30s timeout
-        });
-
-        const latency = Date.now() - startTime;
-        const contentType = response.headers.get('content-type') || '';
-        
-        if (response.ok) {
-          let data;
-          if (contentType.includes('application/json')) {
-            try {
-              data = await response.json();
-            } catch (e) {
-              const text = await response.text();
-              console.warn(`⚠️ Provider ${currentProvider} returned OK but invalid JSON: ${text.substring(0, 100)}`);
-              throw new Error("Invalid JSON response");
-            }
-          } else {
-            const text = await response.text();
-            console.warn(`⚠️ Provider ${currentProvider} returned OK but content-type is ${contentType}: ${text.substring(0, 100)}`);
-            // If it's not JSON but OK, and user expected JSON, it's an error for us
-            throw new Error(`Unexpected content-type: ${contentType}`);
-          }
-
-          await this.updateStats(currentProvider, latency, true);
-          return data;
-        } else {
-          const errorText = await response.text();
-          console.warn(`⚠️ Provider ${currentProvider} failed (${response.status}): ${errorText.substring(0, 100)}`);
-          await this.updateStats(currentProvider, latency, false);
-          
-          if (response.status === 401 || response.status === 429) {
-            attempts++;
-            currentProvider = this.getBestProvider();
-            continue;
-          }
-          throw new Error(`Provider error: ${response.status} - ${errorText.substring(0, 50)}`);
-        }
-      } catch (error) {
-        const latency = Date.now() - startTime;
-        console.error(`❌ Request error for ${currentProvider}:`, error.message);
-        await this.updateStats(currentProvider, latency, false);
-        attempts++;
-        currentProvider = this.getBestProvider();
-      }
+    const currentProvider = providerName || this.getBestProvider();
+    const p = this.providers[currentProvider];
+    
+    if (!p) {
+      throw new Error(`Provider ${currentProvider} not configured`);
     }
-    throw new Error("All providers failed");
+
+    const apiKey = this.getNextKey(currentProvider);
+    if (!apiKey) {
+      throw new Error(`No API key available for ${currentProvider}`);
+    }
+    
+    const startTime = Date.now();
+    try {
+      const url = p.baseUrl + endpoint;
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        ...options.headers
+      };
+
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        timeout: 30000 // 30s timeout
+      });
+
+      const latency = Date.now() - startTime;
+      const contentType = response.headers.get('content-type') || '';
+      
+      if (response.ok) {
+        let data;
+        const text = await response.text();
+        
+        // Handle "Not Found" case even if status is 200 OK (common in proxies/errors)
+        if (text.includes('Not Found') && text.length < 100) {
+           console.warn(`⚠️ Provider ${currentProvider} returned OK but body contains "Not Found"`);
+           await this.updateStats(currentProvider, latency, false);
+           throw new Error("Provider returned Not Found");
+        }
+
+        if (contentType.includes('application/json')) {
+          try {
+            data = JSON.parse(text);
+          } catch (e) {
+            console.warn(`⚠️ Provider ${currentProvider} returned OK but invalid JSON: ${text.substring(0, 100)}`);
+            throw new Error("Invalid JSON response");
+          }
+        } else {
+          console.warn(`⚠️ Provider ${currentProvider} returned OK but content-type is ${contentType}: ${text.substring(0, 100)}`);
+          // If it's not JSON but OK, and user expected JSON, it's an error for us
+          throw new Error(`Unexpected content-type: ${contentType}`);
+        }
+
+        await this.updateStats(currentProvider, latency, true);
+        return data;
+      } else {
+        const errorText = await response.text();
+        console.warn(`⚠️ Provider ${currentProvider} failed (${response.status}): ${errorText.substring(0, 100)}`);
+        await this.updateStats(currentProvider, latency, false);
+        
+        throw new Error(`Provider error: ${response.status} - ${errorText.substring(0, 50)}`);
+      }
+    } catch (error) {
+      const latency = Date.now() - startTime;
+      console.error(`❌ Request error for ${currentProvider}:`, error.message);
+      await this.updateStats(currentProvider, latency, false);
+      throw error; // Rethrow to let server.js handle retries/failover
+    }
   }
 
   getProviderStatus() {
