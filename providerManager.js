@@ -22,7 +22,7 @@ class ProviderManager {
       'groq': {
         baseUrl: 'https://api.groq.com/openai/v1',
         apiKeys: this.parseApiKeys(process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY),
-        models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+        models: ['llama-3.2-1b-preview', 'llama-3.2-90b-preview', 'mixtral-8x7b-32768'],
         keyIndex: 0
       },
       'anthropic': {
@@ -40,14 +40,14 @@ class ProviderManager {
       'nvidia': {
         baseUrl: 'https://integrate.api.nvidia.com/v1',
         apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY),
-        models: ['meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct'],
+        models: ['nvidia/llama-3.1-nemotron-70b-instruct'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
       },
       'cerebras': {
         baseUrl: 'https://api.cerebras.ai/v1',
         apiKeys: this.parseApiKeys(process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY),
-        models: ['llama3.1-70b', 'llama3.1-8b'],
+        models: ['llama3.3-70b'],
         keyIndex: 0
       },
       'together': {
@@ -89,7 +89,7 @@ class ProviderManager {
       'aitools': {
         baseUrl: 'https://platform.aitools.cfd/api/v1',
         apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY),
-        models: ['gpt-4-turbo'],
+        models: ['gpt-4o-mini'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
       }

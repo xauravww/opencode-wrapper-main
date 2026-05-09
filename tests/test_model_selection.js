@@ -5,16 +5,25 @@ dotenv.config();
 
 async function test() {
     const pm = new ProviderManager();
-    // Wait a bit for initialization (though sync part is instant)
+    await new Promise(r => setTimeout(r, 500));
 
     const providers = pm.getOrderedProviders();
-    console.log('Top Provider:', providers[0]);
+    console.log('Top Providers:', providers.slice(0, 3));
 
-    if (providers.length > 0) {
-        const bestModel = pm.getBestModelForProvider(providers[0]);
-        console.log('Best Model:', bestModel);
-    } else {
-        console.log('No providers available.');
+    for (const provider of providers.slice(0, 3)) {
+        const model = pm.getBestModelForProvider(provider);
+        console.log(`  ${provider}: ${model}`);
+    }
+
+    const { provider: best, model: bestModel } = pm.getBestModel();
+    console.log('Best:', best, bestModel);
+
+    const status = pm.getProviderStatus();
+    console.log('\n--- Provider Status ---');
+    for (const [name, s] of Object.entries(status)) {
+        if (s.configured) {
+            console.log(`  ${name}: ${s.health_status} (latency: ${Math.round(s.avg_latency)}ms)`);
+        }
     }
 
     process.exit(0);
