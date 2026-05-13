@@ -253,8 +253,8 @@ async function start() {
   const providerManager = new ProviderManager();
   await providerManager.reloadKeys(); // Load dynamic keys from DB
 
-  // Log Cleanup Task (Daily at midnight)
-  cron.schedule('0 0 * * *', async () => {
+  // Log Cleanup Task (Monthly on the 1st at midnight)
+  cron.schedule('0 0 1 * *', async () => {
     console.log('🧹 Running daily log cleanup...');
     try {
       const thirtyDaysAgo = new Date();
