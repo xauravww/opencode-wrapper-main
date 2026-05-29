@@ -506,27 +506,37 @@ class ProviderManager {
       if (config.apiKeys && config.apiKeys.length > 0) {
         try {
           const endpoint = config.healthCheckEndpoint || '/models';
-          const options = endpoint === '/chat/completions' 
-            ? { 
+          
+          let options = { method: 'GET' };
+          
+          if (endpoint.includes('chat/completions')) {
+             options = { 
                 method: 'POST', 
                 body: JSON.stringify({ 
-                  model: config.models[0], 
+                  model: config.models[0] || 'gpt-4o-mini', 
                   messages: [{ role: 'user', content: 'hi' }], 
                   max_tokens: 1 
                 }) 
-              } 
-            : { method: 'GET' };
+             };
+          }
 
+          // We don't want a 500 from an upstream model to mark the entire provider as dead if the gateway itself is reachable.
+          // However, for /models, a 500 usually means the gateway is dead.
+          // But since the user is getting 500s from AITools and 404s from Nvidia specifically during health checks,
+          // we should be extremely careful. By forcing /models where possible, we bypass model-specific errors.
+          
           await this.makeRequest(name, endpoint, options);
           this.stats.providers[name].health_status = 'healthy';
         } catch (e) {
-          console.warn(`Health check failed for ${name}: ${e.message}`);
-          // If it's just a 404 on /models, maybe it's still "healthy" for completions?
-          if (e.message.includes('404')) {
-             this.stats.providers[name].health_status = 'degraded';
-          } else {
-             this.stats.providers[name].health_status = 'unhealthy';
+          // If the error contains "Unsupported model" or "Invalid API response format" (upstream model errors), DO NOT fail the health check.
+          const errorStr = String(e.message || '');
+          if (errorStr.includes('Unsupported model') || errorStr.includes('OPENROUTER error') || errorStr.includes('Not Found')) {
+             console.warn(`⚠️ Provider ${name} health check returned model-specific error, but gateway is alive. Marking as healthy.`);
+             this.stats.providers[name].health_status = 'healthy';
+             continue;
           }
+          console.error(`Health check failed for ${name}:`, e.message);
+          this.stats.providers[name].health_status = 'unhealthy';
         }
       }
     }

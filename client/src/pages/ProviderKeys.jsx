@@ -68,6 +68,19 @@ export default function ProviderKeys() {
         }
     };
 
+    const [testingKey, setTestingKey] = useState(null);
+    const handleTestKey = async (provider, id) => {
+        setTestingKey(id);
+        try {
+            const res = await api.post('/admin/provider-keys/test', { provider_name: provider, id: id });
+            setToast({ message: res.data.message || 'Key is valid', type: 'success' });
+        } catch (error) {
+            setToast({ message: error.response?.data?.error || 'Key failed test', type: 'error' });
+        } finally {
+            setTestingKey(null);
+        }
+    };
+
     const handleToggleStatus = async (id, currentStatus) => {
         try {
             await api.patch(`/admin/provider-keys/${id}/status`, { is_active: !currentStatus });
@@ -254,7 +267,15 @@ export default function ProviderKeys() {
                                         )}
                                     </div>
 
-                                    <div className="flex items-center gap-3 shrink-0">
+                                    <div className="flex flex-wrap items-center gap-3 shrink-0">
+                                        <button 
+                                            onClick={() => handleTestKey(provider, key._id || key.id)}
+                                            disabled={testingKey === (key._id || key.id)}
+                                            className="badge cursor-pointer transition-colors text-[11px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+                                        >
+                                            {testingKey === (key._id || key.id) ? 'Testing...' : 'Test Key'}
+                                        </button>
+                                        
                                         {key.created_at && (
                                             <span className="text-[11px] text-textMuted font-mono hidden md:block">
                                                 {new Date(key.created_at).toLocaleDateString()}

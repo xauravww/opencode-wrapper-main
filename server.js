@@ -562,6 +562,64 @@ async function start() {
     }
   });
 
+  app.post('/api/admin/provider-keys/test', verifyToken, async (req, res) => {
+    const { provider_name, id } = req.body;
+    if (!provider_name || !id) return res.status(400).json({ error: 'Missing fields' });
+
+    try {
+      const config = providerManager.providers[provider_name];
+      if (!config) return res.status(400).json({ error: 'Unknown provider' });
+
+      let actual_api_key = null;
+      if (id.startsWith('env-')) {
+        const index = parseInt(id.split('-').pop());
+        const envKeys = providerManager.getEnvKeys(provider_name);
+        actual_api_key = envKeys[index];
+      } else {
+        const dbKey = await ProviderKey.findById(id);
+        if (dbKey) actual_api_key = dbKey.api_key;
+      }
+
+      if (!actual_api_key) return res.status(404).json({ error: 'Key not found' });
+
+      let url = `${config.baseUrl}/models`;
+      if (provider_name === 'gemini') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${actual_api_key}`;
+      }
+      
+      const headers = {};
+      if (provider_name !== 'gemini') {
+        headers['Authorization'] = `Bearer ${actual_api_key}`;
+      }
+
+      const checkRes = await fetch(url, { headers, timeout: 5000 });
+      if (checkRes.ok) {
+        return res.json({ success: true, message: 'Key is valid and active' });
+      }
+
+      // If /models fails with 404, fallback to checking chat/completions directly if it's a known provider that doesn't support /models
+      if (checkRes.status === 404) {
+         const chatUrl = `${config.baseUrl}/chat/completions`;
+         const chatRes = await fetch(chatUrl, { 
+             method: 'POST', 
+             headers: { ...headers, 'Content-Type': 'application/json' },
+             body: JSON.stringify({ model: config.models[0] || 'gpt-4o-mini', messages: [{role: 'user', content: 'hi'}], max_tokens: 1 }),
+             timeout: 5000
+         });
+         
+         if (chatRes.ok || chatRes.status === 400) { // 400 could mean bad model, but key is valid
+            return res.json({ success: true, message: 'Key is valid (verified via chat endpoint)' });
+         }
+         return res.status(400).json({ error: `Provider returned ${chatRes.status}` });
+      }
+
+      const errText = await checkRes.text();
+      return res.status(400).json({ error: `Provider returned ${checkRes.status}: ${errText.substring(0, 50)}` });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.patch('/api/admin/provider-keys/:id/status', verifyToken, async (req, res) => {
     const { id } = req.params;
     const { is_active } = req.body;
