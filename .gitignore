@@ -227,3 +227,6 @@ opencode.db-wal
 opencode.db-shm
 db/opencode.db-shm
 db/opencode.db-wal
+
+# Antigravity CLI
+.antigravitycli

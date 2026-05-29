@@ -16,7 +16,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import ProviderManager from './providerManager.js';
 import cron from 'node-cron';
 import { initDB } from './db/index.js';
-import { User, ProviderKey, WrapperKey, RequestLog, ModelPricing, ProviderStats } from './db/mongo.js';
+import { User, ProviderKey, WrapperKey, RequestLog, ModelPricing, ProviderStats, queueRequestLog } from './db/mongo.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, createHash, randomUUID } from 'crypto';
@@ -201,6 +201,8 @@ const verifyToken = (req, res, next) => {
 };
 
 // Middleware to verify Wrapper API Keys
+const keyCache = new Map();
+
 const verifyWrapperKey = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
 
@@ -217,20 +219,32 @@ const verifyWrapperKey = async (req, res, next) => {
   }
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    try {
-      await new RequestLog({ provider: 'system', model: 'auth-missing', status_code: 401, cost_usd: 0 }).save();
-    } catch (e) { console.error('Failed to log auth error:', e); }
-
+    queueRequestLog({ provider: 'system', model: 'auth-missing', status_code: 401, cost_usd: 0 });
     return res.status(401).json({ error: 'Missing or invalid Authorization header' });
   }
 
   const apiKey = authHeader.split(' ')[1];
+  const hash = createHash('sha256').update(apiKey).digest('hex');
+  const now = Date.now();
+
+  if (keyCache.has(hash)) {
+    const cached = keyCache.get(hash);
+    if (now - cached.timestamp < 300000) { // 5 minutes TTL
+      if (cached.keyRecord) {
+        req.wrapperKeyId = cached.keyRecord._id;
+        return next();
+      } else {
+        queueRequestLog({ provider: 'system', model: 'auth-invalid', status_code: 401, cost_usd: 0 });
+        return res.status(401).json({ error: 'Invalid API Key' });
+      }
+    }
+  }
 
   try {
-    const hash = createHash('sha256').update(apiKey).digest('hex');
     const keyRecord = await WrapperKey.findOne({ api_key_hash: hash, is_active: true });
 
     if (keyRecord) {
+      keyCache.set(hash, { keyRecord, timestamp: now });
       req.wrapperKeyId = keyRecord._id;
       return next();
     }
@@ -238,10 +252,8 @@ const verifyWrapperKey = async (req, res, next) => {
     console.error("Key verification error:", err.message);
   }
 
-  try {
-    await new RequestLog({ provider: 'system', model: 'auth-invalid', status_code: 401, cost_usd: 0 }).save();
-  } catch (e) { console.error('Failed to log auth error:', e); }
-
+  keyCache.set(hash, { keyRecord: null, timestamp: now });
+  queueRequestLog({ provider: 'system', model: 'auth-invalid', status_code: 401, cost_usd: 0 });
   return res.status(401).json({ error: 'Invalid API Key' });
 };
 
@@ -1017,7 +1029,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             const usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
             const finalCost = await calculateCost(usage, selectedProvider, actualModel);
 
-            await new RequestLog({
+            queueRequestLog({
               wrapper_key_id: req.wrapperKeyId,
               provider: selectedProvider,
               model: actualModel,
@@ -1026,7 +1038,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
               latency_ms: Date.now() - startTime,
               status_code: 200,
               cost_usd: finalCost
-            }).save();
+            });
 
           } catch (logErr) {
             console.error('Logging failed:', logErr);
@@ -1062,9 +1074,12 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
 
           const zenBaseUrl = process.env.ZEN_BASE_URL || 'https://opencode.ai/zen/v1';
 
-          // Use minimax-m2.5-free for opencode fallback
+          // Use dynamically loaded free model or big-pickle for opencode fallback
+          const opencodeModels = providerManager.providers['opencode']?.models || [];
+          const fallbackModel = opencodeModels.length > 0 ? opencodeModels[0] : 'big-pickle';
+
           const fallbackRequestBody = {
-            model: 'minimax-m2.5-free',
+            model: fallbackModel,
             messages: processedMessages,
             stream: stream || false,
             ...(tools && { tools })
@@ -1100,7 +1115,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             trackStreamAndLog(response, res, {
               wrapperKeyId: req.wrapperKeyId,
               provider: 'opencode', // Fallback provider
-              model: 'minimax-m2.5-free',   // Fallback model
+              model: fallbackModel,   // Fallback model
               startTime: startTime,
               ip: req.ip
             });
@@ -1127,18 +1142,18 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
             // Fallback Logging & Cost Calculation
             try {
               const usage = result.usage || { prompt_tokens: 0, completion_tokens: 0 };
-              const finalCost = await calculateCost(usage, 'opencode', 'minimax-m2.5-free');
+              const finalCost = await calculateCost(usage, 'opencode', fallbackModel);
 
-              await new RequestLog({
+              queueRequestLog({
                 wrapper_key_id: req.wrapperKeyId,
                 provider: 'opencode',
-                model: 'minimax-m2.5-free',
+                model: fallbackModel,
                 prompt_tokens: usage.prompt_tokens || 0,
                 completion_tokens: usage.completion_tokens || 0,
                 latency_ms: Date.now() - startTime,
                 status_code: 200,
                 cost_usd: finalCost
-              }).save();
+              });
             } catch (logErr) {
               console.error('Fallback logging failed:', logErr);
             }
@@ -1264,7 +1279,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
       try {
         const inputCost = (input.length / 1000) * 0.015; // Approx cost calculation
         
-        await new RequestLog({
+        queueRequestLog({
           wrapper_key_id: req.wrapperKeyId,
           provider: 'edge-tts',
           model: model || 'tts-1',
@@ -1273,7 +1288,7 @@ app.post('/v1/chat/completions', verifyWrapperKey, async (req, res) => {
           latency_ms: Date.now() - startTime,
           status_code: 200,
           cost_usd: inputCost
-        }).save();
+        });
       } catch (logErr) {
         console.error('TTS logging failed:', logErr);
       }

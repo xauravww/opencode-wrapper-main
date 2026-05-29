@@ -67,3 +67,21 @@ export const WrapperKey = mongoose.model('WrapperKey', wrapperKeySchema);
 export const RequestLog = mongoose.model('RequestLog', requestLogSchema);
 export const ProviderStats = mongoose.model('ProviderStats', providerStatsSchema);
 export const ModelPricing = mongoose.model('ModelPricing', modelPricingSchema);
+
+// Queue for batch inserting RequestLogs
+const requestLogBuffer = [];
+setInterval(async () => {
+  if (requestLogBuffer.length > 0) {
+    const logsToSave = [...requestLogBuffer];
+    requestLogBuffer.length = 0;
+    try {
+      await RequestLog.insertMany(logsToSave);
+    } catch (e) {
+      console.error('Failed to bulk insert logs', e);
+    }
+  }
+}, 5000);
+
+export function queueRequestLog(logData) {
+  requestLogBuffer.push(logData);
+}

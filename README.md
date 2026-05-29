@@ -1,219 +1,65 @@
 # OpenCode Wrapper
 
-An OpenAI-compatible API wrapper that uses **OpenCode Zen's FREE models** - no API keys required beyond Zen signup!
+An enterprise-grade, high-performance API gateway and wrapper that provides an OpenAI-compatible interface across multiple LLM providers (Groq, Anthropic, Gemini, OpenAI, Cerebras, etc.) with smart fallback, load balancing, and rate limiting.
 
-## Features
+## Core Features
 
-- OpenAI-compatible chat completions API
-- Uses **free models** from OpenCode Zen (Minimax, Grok Code)
-- **Free to use** - only requires Zen account signup
-- Dynamic model selection
-- **Image processing** - supports images via base64 embedding in text prompts
-- Swagger documentation
-- Environment-based configuration
+- **OpenAI-Compatible Interface**: Seamlessly drop-in replacement for OpenAI endpoints (`/v1/chat/completions`).
+- **Multi-Provider Load Balancing**: Automatically routes requests to the fastest and healthiest provider based on historical latency and error rates.
+- **Smart Fallback**: If a primary provider (like Groq) fails or times out, the request is instantly re-routed to the next best provider without the client noticing.
+- **Free Default Models**: Out-of-the-box support for OpenCode Zen's free models as a reliable fallback.
+- **Image Generation & Text-to-Speech**: Built-in support for `/v1/images/generations` and `/v1/audio/speech`.
+- **Admin & Client API Keys**: Secure your endpoints using MongoDB-backed Client API keys. Generate keys instantly via the Admin API.
+- **Analytics & Billing**: Tracks tokens, latency, and cost per request.
 
-## Installation
+## Architecture Highlights
+- **Fail Fast**: Configured with strict 10s timeouts to prevent connection hanging.
+- **In-Memory LRU Auth**: API keys are cached in memory (5m TTL) to eliminate database bottlenecks on the hot path.
+- **Async Logging**: High-throughput analytics queue batches logs to MongoDB without blocking API responses.
 
-1. Clone this repository
-2. Install dependencies:
+## Installation & Setup
+
+1. **Clone & Install**
    ```bash
+   git clone https://github.com/yourusername/opencode-wrapper.git
+   cd opencode-wrapper
    npm install
    ```
 
-3. Copy `.env` and configure your settings:
+2. **Configure Environment**
    ```bash
-   cp .env .env.local
+   cp .env.example .env
    ```
+   Edit `.env` to add your Provider API keys (Groq, Gemini, Anthropic, etc.) and your MongoDB connection string.
 
-   Edit `.env.local` with your configuration.
-
-## Setup
-
-### 1. Get Your Free Zen API Key
-
-1. Visit [OpenCode Zen](https://opencode.ai/auth)
-2. Sign up for a free account
-3. Go to API Keys section and create a new key
-4. Copy your API key
-
-### 2. Configuration
-
-Create a `.env` file with your Zen settings:
-
-```env
-# OpenCode Zen Configuration (FREE!)
-ZEN_BASE_URL=https://opencode.ai/zen/v1
-ZEN_API_KEY=your-zen-api-key-here
-
-# Default Model Configuration (Free Zen models)
-DEFAULT_MODEL=minimax/minimax-m2.1
-
-# API Configuration
-PORT=3010
-
-# Development Mode (disable rate limiting for development)
-DEV_MODE=false
-
-# Rate Limiting (only applies when DEV_MODE=false)
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-```
-
-### 3. Start the Wrapper
-
-```bash
-npm install
-npm start
-```
-
-**For development** (no rate limits):
-```bash
-DEV_MODE=true npm start
-```
-
-**That's it!** Access to free AI models with just a Zen signup.
-
-### 🆓 Free Models Available
-
-- **Minimax** (`minimax/minimax-m2.1`) - High performance free model (Default)
-- **Grok Code** (`grok-code`) - Free coding assistant with image analysis
-
-## Usage
-
-1. **Start your local AI model** (Ollama/LM Studio)
-2. **Start the wrapper**:
+3. **Start the Gateway**
    ```bash
    npm start
    ```
-3. **Make API calls** - no authentication needed!
-
-## API Endpoints
-
-### POST /v1/chat/completions
-
-Create a chat completion using OpenCode Zen models.
-
-**Request Body (Text):**
-```json
-{
-  "messages": [
-    {"role": "user", "content": "Hello!"}
-  ],
-  "model": "minimax/minimax-m2.1"
-}
-```
-
-**Request Body (With Image):**
-```json
-{
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "What is in this image?"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-      ]
-    }
-  ],
-  "model": "minimax/minimax-m2.1"
-}
-```
-
-**Response:**
-```json
-{
-  "id": "chatcmpl-1234567890",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "minimax/minimax-m2.1",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "Hello! How can I help you?"
-    },
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 20,
-    "total_tokens": 30
-  }
-}
-```
-
-### GET /v1/models
-### GET /v1/models
-
-List available models.
-
-### POST /v1/audio/speech
-
-Generates audio from input text (Text-to-Speech).
-
-**Request Body:**
-```json
-{
-  "model": "tts-1",
-  "input": "The quick brown fox jumps over the lazy dog.",
-  "voice": "alloy"
-}
-```
-
-**Supported Voices:**
-- `alloy`
-- `echo`
-- `fable`
-- `onyx`
-- `nova`
-- `shimmer`
-
-**Response:**
-Returns an audio file (MP3) of the spoken text. Supports streaming.
-
-## Image Processing
-
-This wrapper supports image analysis by embedding base64-encoded images directly in the text prompt. Simply include `image_url` objects in the message content array, and the system will convert them to text for processing.
-
-- **Supported formats:** Base64 data URLs (e.g., `data:image/png;base64,...`)
-- **How it works:** Images are decoded and described by the AI model
-- **Example:** A 1x1 transparent PNG is described as "a minimal 1x1 pixel PNG file with a single transparent pixel"
-
-## Development
-
-2. For development with auto-restart:
+   *For development (disables rate limiting):*
    ```bash
-   npm run dev
+   DEV_MODE=true npm start
    ```
 
-3. View API documentation at `http://localhost:3010/api-docs`
+## Usage (Authentication)
 
-## Authentication & Usage
+To use the API, you must authenticate using a **Client API Key**. You can generate these in your database or via the Admin interface.
 
-To use the API, you must include a valid **Client API Key** in the `Authorization` header. You can generate these keys in the **Admin Panel > Client Keys**.
-
-**Format:**
-```
-Authorization: Bearer sk-your_generated_client_key
-```
-
-### Example Requests
-
-#### 1. curl (Terminal)
 ```bash
 curl -X POST http://localhost:3010/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-your_generated_client_key" \
   -d '{
     "messages": [
-      {"role": "user", "content": "Hello, how are you?"}
+      {"role": "user", "content": "Explain quantum computing in one sentence."}
     ],
-    "model": "gpt-3.5-turbo"
+    "model": "llama-3.3-70b",
+    "stream": true
   }'
 ```
 
-#### 2. Python (openai library)
-You can use the standard OpenAI Python library by changing the `base_url` and `api_key`.
+### Python OpenAI SDK
+Because this is an OpenAI-compatible gateway, you can simply use the standard `openai` Python/Node SDKs:
 
 ```python
 from openai import OpenAI
@@ -224,54 +70,17 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gpt-3.5-turbo",
-    messages=[
-        {"role": "user", "content": "Tell me a joke."}
-    ]
+    model="llama-3.3-70b",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True
 )
 
-print(response.choices[0].message.content)
+for chunk in response:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-#### 3. Python (requests)
-```python
-import requests
+## Scaling Considerations
 
-url = "http://localhost:3010/v1/chat/completions"
-headers = {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer sk-your_generated_client_key"
-}
-data = {
-    "model": "gpt-3.5-turbo",
-    "messages": [{"role": "user", "content": "Hello!"}]
-}
-
-response = requests.post(url, headers=headers, json=data)
-print(response.json())
-```
-
-## Requirements
-
-- Node.js 18+
-- Free OpenCode Zen account ([sign up here](https://opencode.ai/auth))
-- Zen API key configured in `.env`
-
-## Development Mode
-
-**Disable rate limiting** during development:
-
-```bash
-# Option 1: Environment variable
-DEV_MODE=true npm start
-
-# Option 2: Edit .env file
-DEV_MODE=true
-```
-
-**Benefits:**
-- Unlimited API calls for testing
-- No rate limit errors during development
-- Rate limiting automatically active in production
-
-**Default:** Rate limiting is enabled (100 requests per 15 minutes)
+If you plan to run multiple instances behind a load balancer, note the following:
+- Ensure MongoDB is accessible to all instances.
+- Enable the Redis configuration in your `.env` to share image caching and distributed rate limiting (Recommended for production).

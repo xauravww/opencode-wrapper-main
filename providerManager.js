@@ -9,7 +9,7 @@ class ProviderManager {
       'opencode': {
         baseUrl: process.env.ZEN_BASE_URL || process.env.ZEN_API_URL || 'https://opencode.ai/zen/v1',
         apiKeys: this.parseApiKeys(process.env.ZEN_API_KEY),
-        models: ['minimax-m2.5-free', 'grok-2', 'grok-2-vision'],
+        models: [], // Dynamically fetched in reloadKeys
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions' // Opencode might not have /models
       },
@@ -22,7 +22,7 @@ class ProviderManager {
       'groq': {
         baseUrl: 'https://api.groq.com/openai/v1',
         apiKeys: this.parseApiKeys(process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY),
-        models: ['llama-3.2-1b-preview', 'llama-3.2-90b-preview', 'mixtral-8x7b-32768'],
+        models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
         keyIndex: 0
       },
       'anthropic': {
@@ -34,20 +34,20 @@ class ProviderManager {
       'gemini': {
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
         apiKeys: this.parseApiKeys(process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY),
-        models: ['gemini-1.5-pro', 'gemini-1.5-flash'],
+        models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
         keyIndex: 0
       },
       'nvidia': {
         baseUrl: 'https://integrate.api.nvidia.com/v1',
         apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY),
-        models: ['nvidia/llama-3.1-nemotron-70b-instruct'],
+        models: ['meta/llama-3.1-70b-instruct'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
       },
       'cerebras': {
         baseUrl: 'https://api.cerebras.ai/v1',
         apiKeys: this.parseApiKeys(process.env.CEREBRAS_API_KEYS || process.env.CEREBRAS_API_KEY),
-        models: ['llama3.3-70b'],
+        models: ['gpt-oss-120b', 'zai-glm-4.7'],
         keyIndex: 0
       },
       'together': {
@@ -149,10 +149,39 @@ class ProviderManager {
         
         if (allKeys.length > 0) {
           console.log(`📡 Loaded ${allKeys.length} keys for ${providerName} (${dbKeysForProvider.length} from DB)`);
+          
+          // Dynamically fetch OpenCode models
+          if (providerName === 'opencode') {
+            this.fetchOpencodeModels(allKeys[0]).catch(e => console.error('Failed to fetch opencode models:', e));
+          }
         }
       });
     } catch (error) {
        console.error('❌ Error reloading keys:', error);
+    }
+  }
+
+  async fetchOpencodeModels(apiKey) {
+    try {
+      const url = `${this.providers['opencode'].baseUrl}/models`;
+      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 });
+      if (res.ok) {
+        const data = await res.json();
+        let modelsList = data.data || data.models || data;
+        const validModels = modelsList
+          .map(m => m.id || m.name)
+          .filter(name => name && (name.endsWith('free') || name === 'big-pickle'));
+        
+        if (validModels.length > 0) {
+          this.providers['opencode'].models = validModels;
+          console.log(`✅ Dynamically loaded OpenCode models: ${validModels.join(', ')}`);
+        } else {
+          // Fallback if none found
+          this.providers['opencode'].models = ['big-pickle'];
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not dynamically fetch opencode models:', e.message);
     }
   }
 
@@ -370,15 +399,27 @@ class ProviderManager {
       const response = await fetch(url, {
         ...options,
         headers,
-        timeout: 30000 // 30s timeout
+        timeout: 10000 // Reduced timeout to 10s for fast failover
       });
 
       const latency = Date.now() - startTime;
-      const contentType = response.headers.get('content-type') || '';
       
-      if (response.ok) {
-        let data;
-        const text = await response.text();
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`⚠️ Provider ${currentProvider} failed (${response.status}): ${errorText.substring(0, 100)}`);
+        await this.updateStats(currentProvider, latency, false);
+        throw new Error(`Provider error: ${response.status} - ${errorText.substring(0, 50)}`);
+      }
+
+      // STREAMING FIX: Return raw body immediately if stream is requested
+      if (options.stream) {
+        await this.updateStats(currentProvider, latency, true);
+        return { body: response.body, model: options.body ? JSON.parse(options.body).model : '' }; 
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      let data;
+      const text = await response.text();
         
         // Handle "Not Found" case even if status is 200 OK (common in proxies/errors)
         if (text.includes('Not Found') && text.length < 100) {
@@ -402,13 +443,6 @@ class ProviderManager {
 
         await this.updateStats(currentProvider, latency, true);
         return data;
-      } else {
-        const errorText = await response.text();
-        console.warn(`⚠️ Provider ${currentProvider} failed (${response.status}): ${errorText.substring(0, 100)}`);
-        await this.updateStats(currentProvider, latency, false);
-        
-        throw new Error(`Provider error: ${response.status} - ${errorText.substring(0, 50)}`);
-      }
     } catch (error) {
       const latency = Date.now() - startTime;
       console.error(`❌ Request error for ${currentProvider}:`, error.message);

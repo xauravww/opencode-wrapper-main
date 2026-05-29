@@ -1,5 +1,5 @@
 import { Transform } from 'stream';
-import { RequestLog } from '../db/mongo.js';
+import { RequestLog, queueRequestLog } from '../db/mongo.js';
 import { calculateCost } from './pricing.js';
 
 /**
@@ -52,22 +52,22 @@ export function trackStreamAndLog(response, res, logData) {
     transformer.on('end', async () => {
         // Write log to MongoDB
         try {
-            const { wrapperKeyId, provider, model, startTime } = logData;
+            const { provider, model } = logData;
 
             const pTokens = usage.prompt_tokens || 0;
             const cTokens = usage.completion_tokens || 0;
             const finalCost = await calculateCost(usage, provider, model);
 
-            await new RequestLog({
-                wrapper_key_id: wrapperKeyId,
-                provider,
-                model,
+            queueRequestLog({
+                wrapper_key_id: logData.wrapperKeyId,
+                provider: logData.provider,
+                model: logData.model,
                 prompt_tokens: pTokens,
                 completion_tokens: cTokens,
-                latency_ms: Date.now() - startTime,
+                latency_ms: Date.now() - logData.startTime,
                 status_code: 200,
                 cost_usd: finalCost
-            }).save();
+            });
 
             console.log(`✅ Streamed response logged for ${provider}: ${pTokens}/${cTokens} tokens.`);
         } catch (err) {
