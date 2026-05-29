@@ -195,6 +195,16 @@ class ProviderManager {
         if (providerName === 'opencode') {
           validModels = validModels.filter(name => name.endsWith('free') || name === 'big-pickle');
           if (validModels.length === 0) validModels = ['big-pickle'];
+        } else if (providerName === 'nvidia') {
+          // Filter out large models to avoid 403 permission errors on free tiers
+          const freeFriendly = validModels.filter(name => 
+            name.includes('llama-3.1-8b') || 
+            name.includes('nemo-12b') || 
+            name.includes('phi-3') ||
+            name.includes('gemma-2-9b') ||
+            name.includes('ministral-8b')
+          );
+          if (freeFriendly.length > 0) validModels = freeFriendly;
         }
 
         if (validModels.length > 0) {
