@@ -92,6 +92,12 @@ class ProviderManager {
         models: ['gpt-4o-mini'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
+      },
+      'megallm': {
+        baseUrl: process.env.MEGALLM_BASE_URL || 'https://api.megallm.com/v1',
+        apiKeys: this.parseApiKeys(process.env.MEGALLM_API_KEY || process.env.MEGALLM_API_KEYS),
+        models: ['gpt-4o-mini'], // Will be dynamically overridden
+        keyIndex: 0
       }
     };
 
@@ -150,10 +156,10 @@ class ProviderManager {
         if (allKeys.length > 0) {
           console.log(`📡 Loaded ${allKeys.length} keys for ${providerName} (${dbKeysForProvider.length} from DB)`);
           
-          // Dynamically fetch OpenCode models
-          if (providerName === 'opencode') {
-            this.fetchOpencodeModels(allKeys[0]).catch(e => console.error('Failed to fetch opencode models:', e));
-          }
+          // Dynamically fetch models for this provider
+          this.fetchProviderModels(providerName, allKeys[0]).catch(e => 
+            console.error(`Failed to fetch models for ${providerName}:`, e.message)
+          );
         }
       });
     } catch (error) {
@@ -161,27 +167,45 @@ class ProviderManager {
     }
   }
 
-  async fetchOpencodeModels(apiKey) {
+  async fetchProviderModels(providerName, apiKey) {
     try {
-      const url = `${this.providers['opencode'].baseUrl}/models`;
-      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 });
+      const provider = this.providers[providerName];
+      let url = `${provider.baseUrl}/models`;
+      
+      // Some providers need special routing or query params
+      if (providerName === 'gemini') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+      }
+
+      const headers = {};
+      if (providerName !== 'gemini') {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      const res = await fetch(url, { headers, timeout: 10000 });
       if (res.ok) {
         const data = await res.json();
-        let modelsList = data.data || data.models || data;
-        const validModels = modelsList
-          .map(m => m.id || m.name)
-          .filter(name => name && (name.endsWith('free') || name === 'big-pickle'));
+        let modelsList = data.data || data.models || (Array.isArray(data) ? data : []);
         
-        if (validModels.length > 0) {
-          this.providers['opencode'].models = validModels;
-          console.log(`✅ Dynamically loaded OpenCode models: ${validModels.join(', ')}`);
-        } else {
-          // Fallback if none found
-          this.providers['opencode'].models = ['big-pickle'];
+        let validModels = modelsList
+          .map(m => m.id || m.name)
+          .filter(name => name && !name.includes('embedding') && !name.includes('whisper') && !name.includes('tts') && !name.includes('audio'));
+        
+        // Specific filtering rules
+        if (providerName === 'opencode') {
+          validModels = validModels.filter(name => name.endsWith('free') || name === 'big-pickle');
+          if (validModels.length === 0) validModels = ['big-pickle'];
         }
+
+        if (validModels.length > 0) {
+          provider.models = validModels;
+          console.log(`✅ Dynamically loaded ${validModels.length} models for ${providerName} (Defaulting to: ${validModels[0]})`);
+        }
+      } else {
+        console.warn(`⚠️ Failed to fetch models for ${providerName}: ${res.status}`);
       }
     } catch (e) {
-      console.warn('⚠️ Could not dynamically fetch opencode models:', e.message);
+      console.warn(`⚠️ Could not dynamically fetch models for ${providerName}:`, e.message);
     }
   }
 
@@ -201,6 +225,7 @@ class ProviderManager {
       'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
       'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
       'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
+      'megallm': process.env.MEGALLM_API_KEYS || process.env.MEGALLM_API_KEY,
     };
     const keyStr = envMap[providerName];
     if (!keyStr) return [];
