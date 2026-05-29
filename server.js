@@ -451,7 +451,7 @@ async function start() {
 
   app.get('/api/admin/provider-keys', verifyToken, async (req, res) => {
     try {
-      const dbKeys = await ProviderKey.find({}, { provider_name: 1, is_active: 1, added_at: 1 });
+      const dbKeys = await ProviderKey.find({}, { provider_name: 1, is_active: 1, added_at: 1, account_name: 1, account_email: 1 });
       
       const envKeys = [];
       const envMap = {
@@ -480,6 +480,8 @@ async function start() {
               created_at: null,
               is_active: 1,
               source: 'env',
+              account_name: 'Environment Variable',
+              account_email: '',
               api_key: 'sk-...' + key.slice(-4)
             });
           });
@@ -499,13 +501,62 @@ async function start() {
   });
 
   app.post('/api/admin/provider-keys', verifyToken, async (req, res) => {
-    const { provider_name, api_key } = req.body;
+    const { provider_name, api_key, account_name, account_email } = req.body;
     if (!provider_name || !api_key) return res.status(400).json({ error: 'Missing fields' });
 
     try {
-      await new ProviderKey({ provider_name, api_key }).save();
+      await new ProviderKey({ 
+        provider_name, 
+        api_key, 
+        account_name: account_name || '', 
+        account_email: account_email || '' 
+      }).save();
       await providerManager.reloadKeys();
       res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/provider-keys/export', verifyToken, async (req, res) => {
+    try {
+      const keys = await ProviderKey.find({}, { __v: 0 });
+      res.json(keys);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/provider-keys/import', verifyToken, async (req, res) => {
+    const { keys } = req.body;
+    if (!Array.isArray(keys)) return res.status(400).json({ error: 'Expected array of keys' });
+
+    let addedCount = 0;
+    let dupCount = 0;
+
+    try {
+      for (const k of keys) {
+        if (!k.provider_name || !k.api_key) continue;
+        
+        // Check for duplicate
+        const existing = await ProviderKey.findOne({ api_key: k.api_key });
+        if (existing) {
+          dupCount++;
+          continue;
+        }
+
+        await new ProviderKey({
+          provider_name: k.provider_name,
+          api_key: k.api_key,
+          account_name: k.account_name || '',
+          account_email: k.account_email || '',
+          is_active: k.is_active !== undefined ? k.is_active : true
+        }).save();
+        addedCount++;
+      }
+      
+      await providerManager.reloadKeys();
+      res.json({ success: true, added: addedCount, duplicates: dupCount });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

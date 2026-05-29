@@ -11,6 +11,8 @@ const providerKeySchema = new mongoose.Schema({
   sqlite_id: Number,
   provider_name: { type: String, required: true },
   api_key: { type: String, required: true },
+  account_name: { type: String, default: '' },
+  account_email: { type: String, default: '' },
   is_active: { type: Boolean, default: true },
   added_at: { type: Date, default: Date.now }
 });

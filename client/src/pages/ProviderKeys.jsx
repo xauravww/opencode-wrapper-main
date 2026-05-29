@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Trash2, Plus, Key, CheckCircle, XCircle } from 'lucide-react';
+import { Trash2, Plus, Key, CheckCircle, XCircle, Download, Upload } from 'lucide-react';
 import Select from '../components/Select';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Toast from '../components/Toast';
@@ -19,7 +19,7 @@ export default function ProviderKeys() {
     const [keys, setKeys] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
-    const [formData, setFormData] = useState({ provider: 'openai', key: '' });
+    const [formData, setFormData] = useState({ provider: 'openai', key: '', account_name: '', account_email: '' });
     const [toast, setToast] = useState({ message: '', type: 'success' });
     const [confirmState, setConfirmState] = useState({ open: false, id: null });
 
@@ -39,8 +39,13 @@ export default function ProviderKeys() {
     const handleAddKey = async (e) => {
         e.preventDefault();
         try {
-            await api.post('/admin/provider-keys', { provider_name: formData.provider, api_key: formData.key });
-            setFormData({ provider: 'openai', key: '' });
+            await api.post('/admin/provider-keys', { 
+                provider_name: formData.provider, 
+                api_key: formData.key,
+                account_name: formData.account_name,
+                account_email: formData.account_email
+            });
+            setFormData({ provider: 'openai', key: '', account_name: '', account_email: '' });
             setShowForm(false);
             fetchKeys();
         } catch (error) {
@@ -72,6 +77,45 @@ export default function ProviderKeys() {
         }
     };
 
+    const handleExport = async () => {
+        try {
+            const res = await api.get('/admin/provider-keys/export');
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res.data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "provider_keys_backup.json");
+            document.body.appendChild(downloadAnchorNode); // required for firefox
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            setToast({ message: 'Export successful', type: 'success' });
+        } catch (error) {
+            setToast({ message: 'Export failed', type: 'error' });
+        }
+    };
+
+    const handleImportClick = () => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.json';
+        fileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const keys = JSON.parse(event.target.result);
+                    const res = await api.post('/admin/provider-keys/import', { keys });
+                    setToast({ message: `Imported ${res.data.added} keys. ${res.data.duplicates} duplicates ignored.`, type: 'success' });
+                    fetchKeys();
+                } catch (err) {
+                    setToast({ message: 'Invalid JSON file', type: 'error' });
+                }
+            };
+            reader.readAsText(file);
+        };
+        fileInput.click();
+    };
+
     const grouped = keys.reduce((acc, key) => {
         if (!acc[key.provider_name]) acc[key.provider_name] = [];
         acc[key.provider_name].push(key);
@@ -96,13 +140,20 @@ export default function ProviderKeys() {
                     <h2 className="page-title">Provider Connections</h2>
                     <p className="page-subtitle">Manage backend API keys for LLM providers.</p>
                 </div>
-                <button
-                    onClick={() => setShowForm(!showForm)}
-                    className="btn-primary flex items-center gap-2 shrink-0"
-                >
-                    <Plus size={16} />
-                    Add Connection
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button onClick={handleImportClick} className="btn-ghost flex items-center gap-2">
+                        <Upload size={16} /> Import
+                    </button>
+                    <button onClick={handleExport} className="btn-ghost flex items-center gap-2">
+                        <Download size={16} /> Export
+                    </button>
+                    <button
+                        onClick={() => setShowForm(!showForm)}
+                        className="btn-primary flex items-center gap-2"
+                    >
+                        <Plus size={16} /> Add Connection
+                    </button>
+                </div>
             </div>
 
             {/* Add form */}
@@ -128,6 +179,26 @@ export default function ProviderKeys() {
                                     value={formData.key}
                                     onChange={e => setFormData({ ...formData, key: e.target.value })}
                                     required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Account Name (Optional)</label>
+                                <input
+                                    type="text"
+                                    className="input-field w-full"
+                                    placeholder="e.g. John Doe / Org"
+                                    value={formData.account_name}
+                                    onChange={e => setFormData({ ...formData, account_name: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-textMuted uppercase tracking-wider mb-1.5">Account Email (Optional)</label>
+                                <input
+                                    type="email"
+                                    className="input-field w-full"
+                                    placeholder="email@example.com"
+                                    value={formData.account_email}
+                                    onChange={e => setFormData({ ...formData, account_email: e.target.value })}
                                 />
                             </div>
                         </div>
@@ -162,18 +233,24 @@ export default function ProviderKeys() {
                         <div className="divide-y divide-border/50">
                             {providerKeys.map(key => (
                                 <div key={key.id} className="px-5 py-3.5 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-surfaceHover/30 transition-colors">
-                                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                                        <Key size={14} className="text-textMuted shrink-0" />
-                                        <span className="text-sm text-textSecondary truncate">
-                                            {String(key.id || '').includes('env')
-                                                ? `Key #${parseInt(String(key.id).split('-').pop()) + 1}`
-                                                : 'Database Key'
-                                            }
-                                        </span>
-                                        {key.source === 'env' ? (
-                                            <span className="badge bg-blue-500/10 text-blue-400 font-mono text-[10px]">.ENV</span>
-                                        ) : (
-                                            <span className="badge bg-purple-500/10 text-purple-400 font-mono text-[10px]">DB</span>
+                                    <div className="flex flex-col gap-1 flex-1 min-w-0">
+                                        <div className="flex items-center gap-3">
+                                            <Key size={14} className="text-textMuted shrink-0" />
+                                            <span className="text-sm font-medium text-textSecondary truncate">
+                                                {key.account_name || (String(key._id || key.id || '').includes('env')
+                                                    ? `Key #${parseInt(String(key._id || key.id).split('-').pop()) + 1}`
+                                                    : 'Database Key')}
+                                            </span>
+                                            {key.source === 'env' ? (
+                                                <span className="badge bg-blue-500/10 text-blue-400 font-mono text-[10px]">.ENV</span>
+                                            ) : (
+                                                <span className="badge bg-purple-500/10 text-purple-400 font-mono text-[10px]">DB</span>
+                                            )}
+                                        </div>
+                                        {key.account_email && (
+                                            <span className="text-xs text-textMuted pl-7">
+                                                {key.account_email}
+                                            </span>
                                         )}
                                     </div>
 
@@ -190,7 +267,7 @@ export default function ProviderKeys() {
                                             </span>
                                         ) : (
                                             <button
-                                                onClick={() => handleToggleStatus(key.id, key.is_active)}
+                                                onClick={() => handleToggleStatus(key._id || key.id, key.is_active)}
                                                 className={`badge text-[11px] cursor-pointer transition-colors ${
                                                     key.is_active
                                                         ? 'bg-secondary/10 text-secondary hover:bg-secondary/20'
@@ -203,7 +280,7 @@ export default function ProviderKeys() {
 
                                         {key.source !== 'env' && (
                                             <button
-                                                onClick={() => requestDelete(key.id)}
+                                                onClick={() => requestDelete(key._id || key.id)}
                                                 className="p-1.5 rounded-lg text-textMuted hover:text-error hover:bg-error/5 transition-colors"
                                                 title="Delete Key"
                                             >
