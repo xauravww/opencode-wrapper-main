@@ -94,7 +94,7 @@ class ProviderManager {
         healthCheckEndpoint: '/chat/completions'
       },
       'megallm': {
-        baseUrl: process.env.MEGALLM_BASE_URL || 'https://api.megallm.com/v1',
+        baseUrl: process.env.MEGALLM_BASE_URL || 'https://ai.megallm.io/v1',
         apiKeys: this.parseApiKeys(process.env.MEGALLM_API_KEY || process.env.MEGALLM_API_KEYS),
         models: ['gpt-4o-mini'], // Will be dynamically overridden
         keyIndex: 0
