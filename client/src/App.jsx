@@ -4,6 +4,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ClientKeys from './pages/ClientKeys';
 import ProviderKeys from './pages/ProviderKeys';
+import Models from './pages/Models';
 import RequestLogs from './pages/RequestLogs';
 import Playground from './pages/Playground';
 import UsageReport from './pages/UsageReport';
@@ -78,6 +79,7 @@ export default function App() {
                         <Route index element={<Dashboard />} />
                         <Route path="keys" element={<ClientKeys />} />
                         <Route path="provider-keys" element={<ProviderKeys />} />
+                        <Route path="models" element={<Models />} />
                         <Route path="logs" element={<RequestLogs />} />
                         <Route path="playground" element={<Playground />} />
                         <Route path="usage" element={<UsageReport />} />

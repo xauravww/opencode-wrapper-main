@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../App';
-import { LayoutDashboard, Key, LogOut, Server, Terminal, FileText, BadgeDollarSign, DollarSign, Menu, X, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Key, LogOut, Server, Terminal, FileText, BadgeDollarSign, DollarSign, Menu, X, ChevronRight, Boxes } from 'lucide-react';
 
 const navItems = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
     { to: '/keys', icon: Key, label: 'Client Keys' },
     { to: '/provider-keys', icon: Server, label: 'Providers' },
+    { to: '/models', icon: Boxes, label: 'Models' },
     { to: '/logs', icon: FileText, label: 'Request Logs' },
     { to: '/playground', icon: Terminal, label: 'Playground' },
     { to: '/usage', icon: BadgeDollarSign, label: 'Usage' },

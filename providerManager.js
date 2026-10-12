@@ -1,4 +1,4 @@
-import { ProviderKey, ProviderStats, RequestLog } from './db/mongo.js';
+import { ProviderKey, ProviderStats, RequestLog, ModelSetting } from './db/mongo.js';
 import { initDB } from './db/index.js';
 import mongoose from 'mongoose';
 import fetch from 'node-fetch';
@@ -40,7 +40,7 @@ class ProviderManager {
       'nvidia': {
         baseUrl: 'https://integrate.api.nvidia.com/v1',
         apiKeys: this.parseApiKeys(process.env.NVIDIA_API_KEYS || process.env.NVIDIA_API_KEY),
-        models: ['meta/llama-3.1-70b-instruct'],
+        models: ['openai/gpt-oss-20b'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
       },
@@ -68,6 +68,12 @@ class ProviderManager {
         models: ['google/gemini-pro-1.5'],
         keyIndex: 0
       },
+      'omniroute': {
+        baseUrl: process.env.OMNIROUTE_BASE_URL || 'http://192.168.31.85:20128/v1',
+        apiKeys: this.parseApiKeys(process.env.OMNIROUTE_API_KEYS || process.env.OMNIROUTE_API_KEY),
+        models: ['auto/best-coding', 'auto/best-reasoning', 'auto/best-fast', 'auto/best-vision', 'auto/best-chat', 'auto/best-coding-fast', 'auto/pro-coding', 'auto/pro-reasoning', 'auto/pro-vision'],
+        keyIndex: 0
+      },
       'deepseek': {
         baseUrl: 'https://api.deepseek.com/v1',
         apiKeys: this.parseApiKeys(process.env.DEEPSEEK_API_KEYS || process.env.DEEPSEEK_API_KEY),
@@ -89,7 +95,7 @@ class ProviderManager {
       'aitools': {
         baseUrl: 'https://platform.aitools.cfd/api/v1',
         apiKeys: this.parseApiKeys(process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY),
-        models: ['gpt-4o-mini'],
+        models: ['zhipu/glm-4-flash'],
         keyIndex: 0,
         healthCheckEndpoint: '/chat/completions'
       },
@@ -98,12 +104,40 @@ class ProviderManager {
         apiKeys: this.parseApiKeys(process.env.MEGALLM_API_KEY || process.env.MEGALLM_API_KEYS),
         models: ['gpt-4o-mini'], // Will be dynamically overridden
         keyIndex: 0
+      },
+      'hermes': {
+        baseUrl: process.env.HERMES_BASE_URL || 'https://hermes.ai.unturf.com/v1',
+        apiKeys: this.parseApiKeys(process.env.HERMES_API_KEYS || process.env.HERMES_API_KEY),
+        models: ['turboderp/Qwen3.8-27B-exl3'],
+        keyIndex: 0,
+        keyless: true
       }
     };
 
     this.stats = {
       providers: {}
     };
+
+    // Set of "provider::model" keys that have been disabled via the admin UI
+    this.disabledModels = new Set();
+    this.modelSettingsLoaded = false;
+
+    // Models pushed to the front of a provider's list so the default routing
+    // target is always a known-good chat model (discovery order is unreliable).
+    this.preferredModels = {
+      groq: ['qwen/qwen3.8-27b', 'allam-2-7b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+      gemini: ['gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-flash-latest', 'models/gemini-2.5-flash'],
+      cerebras: ['gpt-oss-120b', 'zai-glm-4.7'],
+      nvidia: ['openai/gpt-oss-20b'],
+      aitools: ['zhipu/glm-4-flash', 'google/gemma-4-31b', 'openai/gpt-oss-20b'],
+      opencode: ['big-pickle'],
+      hermes: ['turboderp/Qwen3.8-27B-exl3'],
+      openrouter: ['openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet'],
+    };
+
+    // Providers whose /models list is misleading (dead/retired entries). For
+    // these we ignore discovery and trust the hand-curated `models` list.
+    this.curatedProviders = new Set(['nvidia']);
 
     // Initialize stats locally
     Object.keys(this.providers).forEach(name => {
@@ -120,9 +154,10 @@ class ProviderManager {
       };
     });
 
-    this.loadStats().then(() => {
-        this.reloadKeys().catch(console.error);
-    });
+    this.loadStats()
+      .then(() => this.loadModelSettings())
+      .then(() => this.reloadKeys())
+      .catch(console.error);
   }
 
   parseApiKeys(apiKeysStr) {
@@ -130,14 +165,118 @@ class ProviderManager {
     return apiKeysStr.split(',').map(key => key.trim()).filter(key => key && key !== 'your-api-key-here');
   }
 
+  modelKey(providerName, model) {
+    return `${providerName}::${model}`;
+  }
+
+  isModelEnabled(providerName, model) {
+    return !this.disabledModels.has(this.modelKey(providerName, model));
+  }
+
+  async loadModelSettings() {
+    try {
+      const disabled = await ModelSetting.find({ enabled: false }, { provider: 1, model: 1 });
+      this.disabledModels = new Set(disabled.map(d => this.modelKey(d.provider, d.model)));
+      this.modelSettingsLoaded = true;
+      console.log(`✅ Loaded ${this.disabledModels.size} disabled model(s) from MongoDB`);
+    } catch (err) {
+      console.error('❌ Failed to load model settings:', err.message);
+    }
+  }
+
+  // Recompute the enabled model list for a provider from its full discovered list
+  applyModelFilter(providerName) {
+    const p = this.providers[providerName];
+    if (!p) return;
+    if (!p.allModels) p.allModels = [...(p.models || [])];
+    p.models = p.allModels.filter(m => this.isModelEnabled(providerName, m));
+  }
+
+  async setModelEnabled(providerName, model, enabled) {
+    if (!this.providers[providerName]) {
+      throw new Error(`Unknown provider ${providerName}`);
+    }
+
+    const key = this.modelKey(providerName, model);
+    if (enabled) {
+      this.disabledModels.delete(key);
+    } else {
+      this.disabledModels.add(key);
+    }
+    this.applyModelFilter(providerName);
+
+    try {
+      await ModelSetting.updateOne(
+        { provider: providerName, model },
+        { $set: { enabled, updated_at: new Date() } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error(`❌ Failed to persist model setting ${key}:`, err.message);
+      throw err;
+    }
+  }
+
+  async setProviderModelsEnabled(providerName, enabled) {
+    const p = this.providers[providerName];
+    if (!p) throw new Error(`Unknown provider ${providerName}`);
+
+    if (!p.allModels) p.allModels = [...(p.models || [])];
+    const all = p.allModels;
+    const ops = [];
+    all.forEach(model => {
+      const key = this.modelKey(providerName, model);
+      if (enabled) {
+        this.disabledModels.delete(key);
+      } else {
+        this.disabledModels.add(key);
+      }
+      ops.push({
+        updateOne: {
+          filter: { provider: providerName, model },
+          update: { $set: { enabled, updated_at: new Date() } },
+          upsert: true
+        }
+      });
+    });
+
+    this.applyModelFilter(providerName);
+
+    if (ops.length > 0) {
+      try {
+        await ModelSetting.bulkWrite(ops);
+      } catch (err) {
+        console.error(`❌ Failed to persist model settings for ${providerName}:`, err.message);
+        throw err;
+      }
+    }
+  }
+
+  getModelsWithStatus() {
+    const result = {};
+    Object.keys(this.providers).forEach(name => {
+      const p = this.providers[name];
+      const all = p.allModels || p.models || [];
+      if (all.length === 0) return;
+      result[name] = all.map(model => ({
+        id: model,
+        enabled: this.isModelEnabled(name, model)
+      }));
+    });
+    return result;
+  }
+
   getBasePriority(providerName) {
-    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,opencode,aitools').split(',');
+    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,hermes,opencode,aitools').split(',');
     const index = priorityOrder.indexOf(providerName);
     return index >= 0 ? Math.max(10, 100 - (index * 5)) : 50;
   }
 
   async reloadKeys() {
     try {
+      if (!this.modelSettingsLoaded) {
+        await this.loadModelSettings();
+      }
       const dbKeys = await ProviderKey.find({ is_active: true });
       
       const providerKeysMap = {};
@@ -160,6 +299,11 @@ class ProviderManager {
           this.fetchProviderModels(providerName, allKeys[0]).catch(e => 
             console.error(`Failed to fetch models for ${providerName}:`, e.message)
           );
+        } else if (this.providers[providerName].keyless) {
+          console.log(`📡 Keyless provider ${providerName} — fetching models without auth`);
+          this.fetchProviderModels(providerName, null).catch(e => 
+            console.error(`Failed to fetch models for ${providerName}:`, e.message)
+          );
         }
       });
     } catch (error) {
@@ -167,9 +311,30 @@ class ProviderManager {
     }
   }
 
+  // Move preferred models to the front so models[0] is a known-good chat model
+  prioritizeModels(providerName, list) {
+    const preferred = this.preferredModels[providerName] || [];
+    if (preferred.length === 0) return list;
+    const front = [];
+    preferred.forEach(p => {
+      const hit = list.find(m => m === p || m.endsWith('/' + p) || m.includes(p));
+      if (hit && !front.includes(hit)) front.push(hit);
+    });
+    return [...front, ...list.filter(m => !front.includes(m))];
+  }
+
   async fetchProviderModels(providerName, apiKey) {
     try {
       const provider = this.providers[providerName];
+
+      // Curated providers keep their hardcoded list; discovery is unreliable.
+      if (this.curatedProviders.has(providerName)) {
+        provider.allModels = [...provider.models];
+        this.applyModelFilter(providerName);
+        console.log(`📌 Using curated model list for ${providerName} (${provider.models.length} models)`);
+        return;
+      }
+
       let url = `${provider.baseUrl}/models`;
       
       // Some providers need special routing or query params
@@ -178,7 +343,7 @@ class ProviderManager {
       }
 
       const headers = {};
-      if (providerName !== 'gemini') {
+      if (providerName !== 'gemini' && apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
 
@@ -187,29 +352,24 @@ class ProviderManager {
         const data = await res.json();
         let modelsList = data.data || data.models || (Array.isArray(data) ? data : []);
         
+        // Drop non-chat endpoints (embeddings, tts, guardrails, moderation, etc.)
+        const junk = ['embedding', 'embed', 'whisper', 'tts', 'audio', 'rerank', 'moderation', 'guard', 'orpheus', 'stable-diffusion', 'flux', 'sdxl'];
         let validModels = modelsList
           .map(m => m.id || m.name)
-          .filter(name => name && !name.includes('embedding') && !name.includes('whisper') && !name.includes('tts') && !name.includes('audio'));
+          .filter(name => name && !junk.some(j => name.toLowerCase().includes(j)));
         
         // Specific filtering rules
         if (providerName === 'opencode') {
           validModels = validModels.filter(name => name.endsWith('free') || name === 'big-pickle');
           if (validModels.length === 0) validModels = ['big-pickle'];
-        } else if (providerName === 'nvidia') {
-          // Filter out large models to avoid 403 permission errors on free tiers
-          const freeFriendly = validModels.filter(name => 
-            name.includes('llama-3.1-8b') || 
-            name.includes('nemo-12b') || 
-            name.includes('phi-3') ||
-            name.includes('gemma-2-9b') ||
-            name.includes('ministral-8b')
-          );
-          if (freeFriendly.length > 0) validModels = freeFriendly;
         }
 
+        validModels = this.prioritizeModels(providerName, validModels);
+
         if (validModels.length > 0) {
-          provider.models = validModels;
-          console.log(`✅ Dynamically loaded ${validModels.length} models for ${providerName} (Defaulting to: ${validModels[0]})`);
+          provider.allModels = validModels;
+          this.applyModelFilter(providerName);
+          console.log(`✅ Dynamically loaded ${validModels.length} models for ${providerName} (${provider.models.length} enabled, defaulting to: ${provider.models[0] || validModels[0]})`);
         }
       } else {
         console.warn(`⚠️ Failed to fetch models for ${providerName}: ${res.status}`);
@@ -233,6 +393,7 @@ class ProviderManager {
       'together': process.env.TOGETHER_API_KEYS || process.env.TOGETHER_API_KEY,
       'fireworks': process.env.FIREWORKS_API_KEYS || process.env.FIREWORKS_API_KEY,
       'openrouter': process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY,
+      'omniroute': process.env.OMNIROUTE_API_KEYS || process.env.OMNIROUTE_API_KEY,
       'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
       'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
       'megallm': process.env.MEGALLM_API_KEYS || process.env.MEGALLM_API_KEY,
@@ -343,8 +504,8 @@ class ProviderManager {
     const availableProviders = Object.entries(this.stats.providers)
       .filter(([name, p]) =>
         this.providers[name] &&
-        this.providers[name].apiKeys &&
-        this.providers[name].apiKeys.length > 0 &&
+        ((this.providers[name].apiKeys && this.providers[name].apiKeys.length > 0) || this.providers[name].keyless) &&
+        (this.providers[name].models ? this.providers[name].models.length > 0 : true) &&
         p.health_status !== 'unhealthy'
       )
       .sort((a, b) => {
@@ -387,8 +548,9 @@ class ProviderManager {
 
     const availableProviders = Object.entries(this.stats.providers)
       .filter(([name, p]) => 
-        this.providers[name].apiKeys && 
-        this.providers[name].apiKeys.length > 0 && 
+        this.providers[name] &&
+        ((this.providers[name].apiKeys && this.providers[name].apiKeys.length > 0) || this.providers[name].keyless) &&
+        (this.providers[name].models ? this.providers[name].models.length > 0 : true) &&
         p.health_status !== 'unhealthy'
       )
       .sort((a, b) => {
@@ -418,7 +580,7 @@ class ProviderManager {
     }
 
     const apiKey = this.getNextKey(currentProvider);
-    if (!apiKey) {
+    if (!apiKey && !p.keyless) {
       throw new Error(`No API key available for ${currentProvider}`);
     }
     
@@ -427,7 +589,7 @@ class ProviderManager {
       const url = p.baseUrl + endpoint;
       const headers = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
         ...options.headers
       };
 
@@ -470,6 +632,13 @@ class ProviderManager {
             console.warn(`⚠️ Provider ${currentProvider} returned OK but invalid JSON: ${text.substring(0, 100)}`);
             throw new Error("Invalid JSON response");
           }
+        } else if (contentType.includes('text/event-stream')) {
+          // Some gateways (e.g. omniroute) stream even when stream:false was
+          // requested. Reassemble the SSE deltas into one chat.completion object.
+          data = this.aggregateSSE(text, currentProvider);
+          if (!data) {
+            throw new Error('Received empty event-stream with no usable content');
+          }
         } else {
           console.warn(`⚠️ Provider ${currentProvider} returned OK but content-type is ${contentType}: ${text.substring(0, 100)}`);
           // If it's not JSON but OK, and user expected JSON, it's an error for us
@@ -486,11 +655,50 @@ class ProviderManager {
     }
   }
 
-  getProviderStatus() {
-    const status = {};
+  // Reassemble an SSE chat-completion stream into a single non-streaming object
+  aggregateSSE(raw, providerName = '') {
+    const chunks = [];
+    let id = null, model = null, created = null;
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let json;
+      try { json = JSON.parse(payload); } catch { continue; }
+      if (json.id) id = json.id;
+      if (json.model) model = json.model;
+      if (json.created) created = json.created;
+      const choice = json.choices && json.choices[0];
+      if (choice) chunks.push(choice);
+    }
+    if (chunks.length === 0) return null;
+
+    const last = chunks[chunks.length - 1];
+    const content = chunks.map(c => c.delta?.content || '').join('') || null;
+    const reasoning = chunks.map(c => c.delta?.reasoning_content || c.delta?.reasoning || '').join('') || null;
+    const toolCalls = last.delta?.tool_calls || null;
+
+    const message = { role: 'assistant', content };
+    if (reasoning) message.reasoning_content = reasoning;
+    if (toolCalls) message.tool_calls = toolCalls;
+
+    return {
+      id: id || `chatcmpl-agg-${Date.now()}`,
+      object: 'chat.completion',
+      created: created || Math.floor(Date.now() / 1000),
+      model: model || 'unknown',
+      choices: [{ index: 0, message, finish_reason: last.finish_reason || 'stop' }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      _aggregated: true,
+      _provider: providerName
+    };
+  }
+
+  getProviderStatus() {    const status = {};
     Object.entries(this.stats.providers).forEach(([name, p]) => {
       status[name] = {
-        configured: this.providers[name].apiKeys && this.providers[name].apiKeys.length > 0,
+        configured: (this.providers[name].apiKeys && this.providers[name].apiKeys.length > 0) || !!this.providers[name].keyless,
         keyCount: this.providers[name].apiKeys ? this.providers[name].apiKeys.length : 0,
         priority: p.priority,
         speed_score: p.speed_score,
@@ -513,7 +721,7 @@ class ProviderManager {
   async checkAllHealth() {
     for (const name of Object.keys(this.providers)) {
       const config = this.providers[name];
-      if (config.apiKeys && config.apiKeys.length > 0) {
+      if ((config.apiKeys && config.apiKeys.length > 0) || config.keyless) {
         try {
           const endpoint = config.healthCheckEndpoint || '/models';
           

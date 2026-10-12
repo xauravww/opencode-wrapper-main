@@ -63,12 +63,22 @@ const modelPricingSchema = new mongoose.Schema({
 
 modelPricingSchema.index({ provider: 1, model: 1 }, { unique: true });
 
+const modelSettingSchema = new mongoose.Schema({
+  provider: { type: String, required: true },
+  model: { type: String, required: true },
+  enabled: { type: Boolean, default: true },
+  updated_at: { type: Date, default: Date.now }
+});
+
+modelSettingSchema.index({ provider: 1, model: 1 }, { unique: true });
+
 export const User = mongoose.model('User', userSchema);
 export const ProviderKey = mongoose.model('ProviderKey', providerKeySchema);
 export const WrapperKey = mongoose.model('WrapperKey', wrapperKeySchema);
 export const RequestLog = mongoose.model('RequestLog', requestLogSchema);
 export const ProviderStats = mongoose.model('ProviderStats', providerStatsSchema);
 export const ModelPricing = mongoose.model('ModelPricing', modelPricingSchema);
+export const ModelSetting = mongoose.model('ModelSetting', modelSettingSchema);
 
 // Queue for batch inserting RequestLogs
 const requestLogBuffer = [];

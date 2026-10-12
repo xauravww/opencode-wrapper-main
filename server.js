@@ -27,10 +27,10 @@ import { sendBackupEmail } from './utils/emailService.js';
 import { Communicate } from 'edge-tts-universal';
 import { Whisk } from "@rohitaryal/whisk-api";
 
-dotenv.config({ path: path.resolve('/root/opencode-wrapper-main', '.env') });
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
 app.use(bodyParser.json());
@@ -562,6 +562,42 @@ async function start() {
     }
   });
 
+  app.get('/api/admin/models', verifyToken, (req, res) => {
+    try {
+      res.json(providerManager.getModelsWithStatus());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/admin/models/status', verifyToken, async (req, res) => {
+    const { provider, model, enabled } = req.body;
+    if (!provider || !model || typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'provider, model and enabled (boolean) are required' });
+    }
+
+    try {
+      await providerManager.setModelEnabled(provider, model, enabled);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/admin/models/bulk', verifyToken, async (req, res) => {
+    const { provider, enabled } = req.body;
+    if (!provider || typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'provider and enabled (boolean) are required' });
+    }
+
+    try {
+      await providerManager.setProviderModelsEnabled(provider, enabled);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/admin/provider-keys/test', verifyToken, async (req, res) => {
     const { provider_name, id } = req.body;
     if (!provider_name || !id) return res.status(400).json({ error: 'Missing fields' });
@@ -876,6 +912,7 @@ async function start() {
 
       // Helper to check if provider has valid API keys
       const isProviderConfigured = (config) => {
+        if (config.keyless) return true;
         return config.apiKeys && config.apiKeys.length > 0 &&
           config.apiKeys.some(key => key && key.trim() !== '' && 
             key !== 'your-api-key-here' && key !== 'your-zen-api-key-here');
@@ -892,9 +929,11 @@ async function start() {
                 if (models && Array.isArray(models)) {
                   // Add provider information to each model
                   models.forEach(model => {
+                    const modelId = model.id || (model.name ? model.name.split('/').pop() : 'unknown');
+                    if (!providerManager.isModelEnabled(providerName, modelId)) return;
                     allModels.push({
                       ...model,
-                      id: model.id || (model.name ? model.name.split('/').pop() : 'unknown'),
+                      id: modelId,
                       provider: providerName,
                       owned_by: `${providerName}-via-opencode`
                     });
@@ -909,6 +948,7 @@ async function start() {
                 
                 // Add fallback models for this provider
                 config.models.forEach(modelId => {
+                  if (!providerManager.isModelEnabled(providerName, modelId)) return;
                   allModels.push({
                     id: modelId,
                     object: 'model',
