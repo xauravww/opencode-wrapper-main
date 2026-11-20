@@ -2,6 +2,7 @@ import { ProviderKey, ProviderStats, RequestLog, ModelSetting } from './db/mongo
 import { initDB } from './db/index.js';
 import mongoose from 'mongoose';
 import fetch from 'node-fetch';
+import { callAstra, FREEMODELS_MODEL, FREEMODELS_URL } from './utils/astraProvider.js';
 
 class ProviderManager {
   constructor() {
@@ -111,6 +112,14 @@ class ProviderManager {
         models: ['turboderp/Qwen3.8-27B-exl3'],
         keyIndex: 0,
         keyless: true
+      },
+      'astra': {
+        baseUrl: FREEMODELS_URL,
+        apiKeys: [],
+        models: [FREEMODELS_MODEL],
+        keyIndex: 0,
+        keyless: true,
+        healthCheckEndpoint: '/models'
       }
     };
 
@@ -577,6 +586,25 @@ class ProviderManager {
     
     if (!p) {
       throw new Error(`Provider ${currentProvider} not configured`);
+    }
+
+    // The free Astra source is not OpenAI-wire-compatible; route it through the
+    // internal utility which curls the FreeModels upstream directly.
+    if (currentProvider === 'astra') {
+      const t0 = Date.now();
+      try {
+        if (endpoint.includes('/models')) {
+          await this.updateStats('astra', Date.now() - t0, true);
+          return { object: 'list', data: [{ id: FREEMODELS_MODEL }] };
+        }
+        const body = options.body ? JSON.parse(options.body) : {};
+        const result = await callAstra({ ...body, stream: !!options.stream });
+        await this.updateStats('astra', Date.now() - t0, true);
+        return result;
+      } catch (e) {
+        await this.updateStats('astra', Date.now() - t0, false);
+        throw e;
+      }
     }
 
     const apiKey = this.getNextKey(currentProvider);
