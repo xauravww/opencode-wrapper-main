@@ -11,8 +11,11 @@ describe('OpenCode Wrapper', () => {
   test('should validate environment variables', () => {
     // Check if required env vars are set
     assert.ok(process.env.ZEN_BASE_URL, 'ZEN_BASE_URL should be set');
-    assert.ok(process.env.ZEN_API_KEY, 'ZEN_API_KEY should be set');
     assert.ok(process.env.DEFAULT_MODEL, 'DEFAULT_MODEL should be set');
+    assert.ok(
+      process.env.GROQ_API_KEYS || process.env.NVIDIA_API_KEYS || process.env.GEMINI_API_KEYS,
+      'At least one active provider key should be set'
+    );
   });
 
   test('should parse model string correctly', () => {

@@ -120,6 +120,25 @@ class ProviderManager {
         keyIndex: 0,
         keyless: true,
         healthCheckEndpoint: '/models'
+      },
+      'numes': {
+        baseUrl: process.env.NUMES_BASE_URL || 'https://api.numes.ai/api/v1',
+        apiKeys: this.parseApiKeys(process.env.NUMES_API_KEYS || process.env.NUMES_API_KEY),
+        // Free models only ($0 prompt & $0 completion). Numes returns ~309
+        // models; these 9 are the ones priced at $0.
+        models: [
+          'deepseek/deepseek-v4.1-flash:free',
+          'dealignai/deepseek-v4.1-flash-uncensored-fp8:free',
+          'z-ai/glm-5.3:free',
+          'z-ai/glm-5.3-flash:free',
+          'dealignai/glm-5.3-uncensored-fp8:free',
+          'dealignai/glm-5.3-flash-uncensored-fp8:free',
+          'moonshotai/kimi-k3.1-pro:free',
+          'uniboshi/kimi-k3-abliterated-v1:free',
+          'nvidia/nemotron-3-ultra-550b-a55b:free'
+        ],
+        keyIndex: 0,
+        healthCheckEndpoint: '/models'
       }
     };
 
@@ -141,12 +160,13 @@ class ProviderManager {
       aitools: ['zhipu/glm-4-flash', 'google/gemma-4-31b', 'openai/gpt-oss-20b'],
       opencode: ['big-pickle'],
       hermes: ['turboderp/Qwen3.8-27B-exl3'],
+      numes: ['z-ai/glm-5.3:free', 'deepseek/deepseek-v4.1-flash:free'],
       openrouter: ['openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet'],
     };
 
     // Providers whose /models list is misleading (dead/retired entries). For
     // these we ignore discovery and trust the hand-curated `models` list.
-    this.curatedProviders = new Set(['nvidia']);
+    this.curatedProviders = new Set(['nvidia', 'numes']);
 
     // Initialize stats locally
     Object.keys(this.providers).forEach(name => {
@@ -276,7 +296,7 @@ class ProviderManager {
   }
 
   getBasePriority(providerName) {
-    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,hermes,opencode,aitools').split(',');
+    const priorityOrder = (process.env.PROVIDER_PRIORITY || 'cerebras,groq,nvidia,gemini,openrouter,together,fireworks,anthropic,deepseek,mistral,cohere,hermes,numes,opencode,aitools').split(',');
     const index = priorityOrder.indexOf(providerName);
     return index >= 0 ? Math.max(10, 100 - (index * 5)) : 50;
   }
@@ -406,6 +426,7 @@ class ProviderManager {
       'cohere': process.env.COHERE_API_KEYS || process.env.COHERE_API_KEY,
       'aitools': process.env.AITOOLS_API_KEYS || process.env.AITOOLS_API_KEY,
       'megallm': process.env.MEGALLM_API_KEYS || process.env.MEGALLM_API_KEY,
+      'numes': process.env.NUMES_API_KEYS || process.env.NUMES_API_KEY,
     };
     const keyStr = envMap[providerName];
     if (!keyStr) return [];
